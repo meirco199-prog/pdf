@@ -40,6 +40,9 @@
   .main{flex:1;display:flex;min-height:0}
   #side{width:172px;flex:none;background:var(--panel);border-inline-start:1px solid var(--line);
     overflow:auto;padding:8px;display:flex;flex-direction:column;gap:8px}
+  #sideClose{display:none}
+  #sideBackdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:85;opacity:0;
+    pointer-events:none;transition:.22s;display:none}
   #side h4{margin:2px 0;font-size:12px;color:var(--muted);font-weight:600}
   .thumb{position:relative;background:#0b1220;border:2px solid transparent;border-radius:8px;
     padding:6px;cursor:pointer;transition:.1s}
@@ -108,10 +111,13 @@
   #toast.show{opacity:1}
   #sideToggle{display:none}
   @media (max-width:820px){
-    #side{position:fixed;inset-inline-end:0;top:0;bottom:0;z-index:80;transform:translateX(100%);
-      transition:.2s;box-shadow:-8px 0 24px rgba(0,0,0,.5)}
+    #side{position:fixed;top:0;bottom:0;right:0;left:auto;width:min(280px,82vw);z-index:90;
+      transform:translateX(105%);transition:.22s;box-shadow:-8px 0 30px rgba(0,0,0,.6)}
     #side.open{transform:translateX(0)}
     #sideToggle{display:inline-flex}
+    #sideClose{display:inline-flex;align-self:flex-start}
+    #sideBackdrop{display:block}
+    #sideBackdrop.show{opacity:1;pointer-events:auto}
     .brand small{display:none}
   }
   @media (max-width:640px){
@@ -129,7 +135,7 @@
     .ann .del,.ann .dup{width:28px;height:28px;font-size:14px;line-height:24px}
     .ann .del{left:-14px;top:-14px}
     .ann .dup{left:18px;top:-14px}
-    #side{width:150px}
+    #side{width:min(240px,80vw)}
     .lib .it{width:80px;height:56px}
   }
 </style>
@@ -229,7 +235,9 @@
       ואז <b>שתף</b> לוואטסאפ / מייל.
     </div>
   </div>
+  <div id="sideBackdrop"></div>
   <div id="side" dir="rtl">
+    <button id="sideClose" class="b sm" style="flex-direction:row">✕ סגור</button>
     <h4>עמודים</h4>
     <div id="thumbs"></div>
     <button class="b sm" id="btnAddPage">➕ עמוד ריק</button>
@@ -720,7 +728,7 @@ async function renderThumbs(){
     ops.appendChild(tbtn("⟳",()=>rotatePage(i)));
     ops.appendChild(tbtn("🗑",()=>deletePage(i)));
     d.appendChild(ops);
-    d.addEventListener("click",()=>{selPage=i;renderThumbs();pageEls.get(p.id)?.wrap.scrollIntoView({behavior:"smooth",block:"start"});});
+    d.addEventListener("click",()=>{selPage=i;renderThumbs();pageEls.get(p.id)?.wrap.scrollIntoView({behavior:"smooth",block:"start"});closeSide();});
     box.appendChild(d);
   }
 }
@@ -958,6 +966,10 @@ $("#btnSplit").addEventListener("click",async()=>{const chosen=model.filter(p=>p
     downloadBlob(new Blob([await buildPdf({pages:[list[i]]})],{type:"application/pdf"}),fileName.replace(/\.pdf$/i,"")+"-עמוד"+idx+".pdf");
     await new Promise(r=>setTimeout(r,300));} toast("פוצל להורדות");});
 
-// side toggle (mobile)
-$("#sideToggle").addEventListener("click",()=>$("#side").classList.toggle("open"));
+// side drawer (mobile)
+function openSide(){ $("#side").classList.add("open"); $("#sideBackdrop").classList.add("show"); }
+function closeSide(){ $("#side").classList.remove("open"); $("#sideBackdrop").classList.remove("show"); }
+$("#sideToggle").addEventListener("click",()=>{ $("#side").classList.contains("open")?closeSide():openSide(); });
+$("#sideBackdrop").addEventListener("click",closeSide);
+$("#sideClose").addEventListener("click",closeSide);
 </script>
