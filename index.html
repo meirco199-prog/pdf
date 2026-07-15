@@ -194,6 +194,10 @@
     <label>עובי <input type="range" id="dWidth" min="1" max="20" value="3"><span id="dWlbl" style="color:var(--muted);font-size:12px">3</span></label>
     <label id="dFillWrap" style="display:none"><input type="checkbox" id="dFill"> מילוי</label>
   </span>
+  <span class="pgrp" data-for="place" style="display:none;gap:10px;align-items:center">
+    <b style="color:var(--accent2)">✍️ מצב הצבה — לחצי על הדף להוספת חתימה/חותמת נוספת</b>
+    <button class="b sm" id="placeDone" style="flex-direction:row">✓ סיום</button>
+  </span>
   <span class="grow"></span>
   <span class="hint" id="propsHint">בחר פריט לעריכה · Delete מוחק · Ctrl+Z ביטול</span>
 </div>
@@ -296,6 +300,7 @@ const pageEls=new Map();       // pageId -> {wrap, overlay, canvas}
 let draw=null;                 // active drawing op
 const drawStyle={color:"#e11d48",width:3,fill:false};
 let lib={sigs:[],stamps:[],tpls:[],profile:{name:"",id:""}};
+let pendingStamp=null;   // {url,frac,maxW} for repeated placement ("place" tool)
 
 // ================= UTIL =================
 function toast(m,ms=2600){const t=$("#toast");t.textContent=m;t.classList.add("show");
@@ -318,7 +323,7 @@ $("#fileInput").addEventListener("change",async e=>{
   const fs=[...e.target.files]; if(!fs.length)return;
   fileName=fs[0].name; model=[]; Object.keys(sources).forEach(k=>delete sources[k]);
   for(const f of fs) await addSource(await f.arrayBuffer());
-  $("#empty")?.remove(); selPage=0; userZoomed=false; zoom=fitZoom(); renderAll(); renderThumbs(); pushHistory();
+  $("#empty")?.remove(); selPage=0; userZoomed=false; zoom=1.4; renderAll(); renderThumbs(); pushHistory();
   toast("נטענו "+model.length+" עמודים"); e.target.value="";
 });
 $("#mergeInput").addEventListener("change",async e=>{
@@ -375,13 +380,15 @@ async function renderPageWrap(p,stage){
 }
 
 // ================= OVERLAY INTERACTION =================
-function localPt(p,e){const o=pageEls.get(p.id).overlay.getBoundingClientRect();
-  return {x:(e.clientX-o.left)/zoom, y:(e.clientY-o.top)/zoom};}
+function localPt(p,e){const ov=pageEls.get(p.id).overlay,r=ov.getBoundingClientRect(),es=effSize(p);
+  // map pointer to page-points using the REAL on-screen size — immune to browser zoom / CSS scaling
+  return {x:(e.clientX-r.left)*es.w/r.width, y:(e.clientY-r.top)*es.h/r.height};}
 function attachOverlay(overlay,p){
   overlay.addEventListener("pointerdown",e=>{
     if(e.target!==overlay) return;
     selPage=model.indexOf(p);
     const pt=localPt(p,e);
+    if(tool==="place"&&pendingStamp){ addImageAt(p,pendingStamp.url,pt,pendingStamp); return; }
     if(tool==="text"){ const a=addText(p,pt.x,pt.y); select(a); setTimeout(()=>els.get(a.id).focus(),0); return; }
     if(["pen","marker","line","arrow","rect","redact","whiteout"].includes(tool)){ startDraw(p,pt,e,overlay); return; }
     select(null);
@@ -389,8 +396,6 @@ function attachOverlay(overlay,p){
 }
 function startDraw(p,pt,e,overlay){
   overlay.setPointerCapture(e.pointerId);
-  const rect=overlay.getBoundingClientRect();          // capture ONCE — immune to layout shift mid-stroke
-  const strokePt=ev=>({x:(ev.clientX-rect.left)/zoom, y:(ev.clientY-rect.top)/zoom});
   const col=drawStyle.color,w=drawStyle.width;
   if(tool==="pen"){
     draw={type:"draw",p,points:[[pt.x,pt.y]],color:col,width:w,alpha:1};
@@ -403,7 +408,7 @@ function startDraw(p,pt,e,overlay){
   }
   draw.svg=document.createElement("div"); draw.svg.style.cssText="position:absolute;pointer-events:none";
   overlay.appendChild(draw.svg); updateDrawPreview();
-  overlay.onpointermove=ev=>{ const q=strokePt(ev);
+  overlay.onpointermove=ev=>{ const q=localPt(p,ev);
     if(draw.type==="draw"){ draw.points.push([q.x,q.y]); }
     else if(draw.type==="line"||draw.type==="arrow"){ draw.x2=q.x; draw.y2=q.y; }
     else{ draw.x=Math.min(q.x,draw.x0); draw.y=Math.min(q.y,draw.y0);
@@ -474,6 +479,13 @@ function addText(p,x,y){
     fontPt:parseFloat($("#pFont").value)||18,color:$("#pColor").value,
     family:$("#pFamily").value,bold:false,italic:false,under:false,align:"right"};
   p.annotations.push(a); mountAnn(p,a); return a;
+}
+async function addImageAt(p,url,pt,{frac=0.15,maxW=110}={}){
+  const im=await loadImg(url); const eff=effSize(p);
+  let w=Math.min(eff.w*frac,maxW), h=w*(im.height/im.width);
+  if(h>eff.h*0.5){ h=eff.h*0.5; w=h*(im.width/im.height); }
+  const a={id:"a"+(uid++),type:"image",url,x:pt.x-w/2,y:pt.y-h/2,w,h,aspect:im.width/im.height,rotation:0};
+  p.annotations.push(a); mountAnn(p,a); select(a); pushHistory(); return a;
 }
 async function addImageTo(p,url,{frac=0.22,maxW=180}={}){
   const im=await loadImg(url); const eff=effSize(p);
@@ -606,7 +618,7 @@ function enableDrag(a){
   let mode=null,sx,sy,ox,oy,ow,oh,cx,cy,a0;
   el.addEventListener("pointerdown",e=>{
     if(a.type==="text"&&document.activeElement===el)return;
-    if(tool!=="select")return;
+    if(tool!=="select"&&tool!=="place")return;
     mode="move"; start(e);
   });
   br&&br.addEventListener("pointerdown",e=>{e.stopPropagation();mode="resize";start(e);});
@@ -639,9 +651,10 @@ document.addEventListener("keydown",e=>{
 $$("button.b[data-tool]").forEach(b=>b.addEventListener("click",()=>setTool(tool===b.dataset.tool?"select":b.dataset.tool)));
 function setTool(t){ tool=t; $$("button.b[data-tool]").forEach(x=>x.classList.toggle("on",x.dataset.tool===t));
   const drawTool=["pen","line","arrow","rect"].includes(t);
-  if(t==="text"){showProps("text");} else if(drawTool){showProps("draw");} else if(!sel){showProps(null);}
-  $("#stage").style.cursor=(drawTool||t==="redact"||t==="whiteout"||t==="marker")?"crosshair":"default";
+  if(t==="text"){showProps("text");} else if(drawTool){showProps("draw");} else if(t==="place"){showProps("place");} else if(!sel){showProps(null);}
+  $("#stage").style.cursor=(drawTool||["redact","whiteout","marker","place"].includes(t))?"crosshair":"default";
 }
+$("#placeDone").addEventListener("click",()=>{ pendingStamp=null; setTool("select"); toast("סיום הצבה"); });
 setTool("select");
 
 // ================= INSERT MENU =================
@@ -663,8 +676,6 @@ function promptProfile(){ const n=prompt("שם מלא:",lib.profile.name||""); i
 function updateZoomLbl(){$("#zoomLbl").textContent=Math.round(zoom*100)+"%";}
 $("#btnZoomIn").addEventListener("click",()=>{if(model.length){userZoomed=true;zoom=Math.min(3,zoom+.15);renderAll();}});
 $("#btnZoomOut").addEventListener("click",()=>{if(model.length){userZoomed=true;zoom=Math.max(.3,zoom-.15);renderAll();}});
-window.addEventListener("resize",()=>{ if(!model.length||userZoomed)return;
-  clearTimeout(window._rz); window._rz=setTimeout(()=>{ zoom=fitZoom(); renderAll(); },250); });
 
 // ================= THUMBNAILS / PAGE OPS =================
 async function renderThumbs(){
@@ -744,11 +755,13 @@ $("#sigClear").addEventListener("click",clearSig);
 $("#sigUse").addEventListener("click",async()=>{ if(!sdirty){toast("צייר חתימה קודם");return;}
   const url=trimCanvas(sigpad); $("#sigModal").classList.remove("show");
   if($("#sigSave").checked){lib.sigs.unshift(url);lib.sigs=lib.sigs.slice(0,12);saveLib();}
-  await addImageTo(curPage(),url,{frac:0.22,maxW:150}); setTool("select"); toast("החתימה נוספה — גררי ושני גודל בפינה");});
+  pendingStamp={url,frac:0.15,maxW:110}; await addImageTo(curPage(),url,{frac:0.15,maxW:110}); setTool("place");
+  toast("החתימה נוספה — לחצי על הדף להוספת עוד, או 'סיום'");});
 $("#sigUpInput").addEventListener("change",async e=>{const f=e.target.files[0];if(!f)return;
   const url=await fileToDataURL(f);$("#sigModal").classList.remove("show");
   lib.sigs.unshift(url);lib.sigs=lib.sigs.slice(0,12);saveLib();
-  await addImageTo(curPage(),url,{frac:0.22,maxW:150});setTool("select");e.target.value="";toast("החתימה נוספה");});
+  pendingStamp={url,frac:0.15,maxW:110}; await addImageTo(curPage(),url,{frac:0.15,maxW:110});setTool("place");e.target.value="";
+  toast("החתימה נוספה — לחצי על הדף להוספת עוד, או 'סיום'");});
 function trimCanvas(c){const ctx=c.getContext("2d"),w=c.width,h=c.height,d=ctx.getImageData(0,0,w,h).data;
   let a=w,b=h,mx=0,my=0,f=false;
   for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(d[(y*w+x)*4+3]>10){f=true;if(x<a)a=x;if(x>mx)mx=x;if(y<b)b=y;if(y>my)my=y;}
@@ -760,7 +773,8 @@ function trimCanvas(c){const ctx=c.getContext("2d"),w=c.width,h=c.height,d=ctx.g
 $("#btnStamp").addEventListener("click",()=>{if(!model.length){toast("קודם פתח PDF");return;}$("#stampInput").click();});
 $("#stampInput").addEventListener("change",async e=>{const f=e.target.files[0];if(!f)return;
   const url=await fileToDataURL(f);lib.stamps.unshift(url);lib.stamps=lib.stamps.slice(0,12);saveLib();
-  await addImageTo(curPage(),url,{frac:0.18,maxW:130});setTool("select");e.target.value="";toast("החותמת נוספה");});
+  pendingStamp={url,frac:0.15,maxW:120}; await addImageTo(curPage(),url,{frac:0.15,maxW:120});setTool("place");e.target.value="";
+  toast("החותמת נוספה — לחצי על הדף להוספת עוד, או 'סיום'");});
 $("#btnImage").addEventListener("click",()=>{if(!model.length){toast("קודם פתח PDF");return;}$("#imgInput").click();});
 $("#imgInput").addEventListener("change",async e=>{const f=e.target.files[0];if(!f)return;
   const url=await fileToDataURL(f);await addImageTo(curPage(),url,{frac:0.28,maxW:200});setTool("select");e.target.value="";toast("התמונה נוספה");});
@@ -769,9 +783,9 @@ $("#imgInput").addEventListener("change",async e=>{const f=e.target.files[0];if(
 $("#btnTemplates").addEventListener("click",()=>{renderLib();$("#libModal").classList.add("show");});
 $("#libClose").addEventListener("click",()=>$("#libModal").classList.remove("show"));
 function renderLib(){
-  fillLib("#libSigs",lib.sigs,(url)=>{addImageTo(curPage(),url,{frac:0.22,maxW:150});$("#libModal").classList.remove("show");},
+  fillLib("#libSigs",lib.sigs,(url)=>{pendingStamp={url,frac:0.15,maxW:110};addImageTo(curPage(),url,{frac:0.15,maxW:110});setTool("place");$("#libModal").classList.remove("show");},
     (i)=>{lib.sigs.splice(i,1);saveLib();renderLib();});
-  fillLib("#libStamps",lib.stamps,(url)=>{addImageTo(curPage(),url,{frac:0.18,maxW:130});$("#libModal").classList.remove("show");},
+  fillLib("#libStamps",lib.stamps,(url)=>{pendingStamp={url,frac:0.15,maxW:120};addImageTo(curPage(),url,{frac:0.15,maxW:120});setTool("place");$("#libModal").classList.remove("show");},
     (i)=>{lib.stamps.splice(i,1);saveLib();renderLib();});
   const tb=$("#libTpls");tb.innerHTML="";
   lib.tpls.forEach((t,i)=>{const it=document.createElement("div");it.className="it";
