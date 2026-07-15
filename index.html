@@ -57,6 +57,7 @@
     box-shadow:0 6px 24px rgba(0,0,0,.5);background:#fff;direction:ltr}
   .page canvas.pdf{display:block}
   .overlay{position:absolute;inset:0}
+  body.tool-active .overlay{touch-action:none}
   .ann{position:absolute;cursor:move;touch-action:none}
   .ann.selected{outline:2px solid var(--accent2);outline-offset:1px}
   .ann.text{min-width:20px;min-height:1em;white-space:pre;color:#111;padding:1px 2px;
@@ -112,6 +113,24 @@
     #side.open{transform:translateX(0)}
     #sideToggle{display:inline-flex}
     .brand small{display:none}
+  }
+  @media (max-width:640px){
+    button.b,.b{min-width:0;padding:4px 6px;font-size:14px;gap:1px;border-radius:7px}
+    .lbl{font-size:9px}
+    .brand{font-size:13px;margin-inline-end:2px}
+    .sep{display:none}
+    .bar{gap:4px;padding:6px 7px}
+    #stage{padding:10px 6px 72px}
+    #props{gap:6px}
+    /* finger-friendly handles */
+    .ann .h{width:20px;height:20px}
+    .ann .h.br{right:-10px;bottom:-10px}
+    .ann .h.rot{top:-30px}
+    .ann .del,.ann .dup{width:28px;height:28px;font-size:14px;line-height:24px}
+    .ann .del{left:-14px;top:-14px}
+    .ann .dup{left:18px;top:-14px}
+    #side{width:150px}
+    .lib .it{width:80px;height:56px}
   }
 </style>
 
@@ -323,7 +342,7 @@ $("#fileInput").addEventListener("change",async e=>{
   const fs=[...e.target.files]; if(!fs.length)return;
   fileName=fs[0].name; model=[]; Object.keys(sources).forEach(k=>delete sources[k]);
   for(const f of fs) await addSource(await f.arrayBuffer());
-  $("#empty")?.remove(); selPage=0; userZoomed=false; zoom=1.4; renderAll(); renderThumbs(); pushHistory();
+  $("#empty")?.remove(); selPage=0; userZoomed=false; zoom=(window.innerWidth<=820?fitZoom():1.4); renderAll(); renderThumbs(); pushHistory();
   toast("נטענו "+model.length+" עמודים"); e.target.value="";
 });
 $("#mergeInput").addEventListener("change",async e=>{
@@ -650,6 +669,7 @@ document.addEventListener("keydown",e=>{
 // ================= TOOLS =================
 $$("button.b[data-tool]").forEach(b=>b.addEventListener("click",()=>setTool(tool===b.dataset.tool?"select":b.dataset.tool)));
 function setTool(t){ tool=t; $$("button.b[data-tool]").forEach(x=>x.classList.toggle("on",x.dataset.tool===t));
+  document.body.classList.toggle("tool-active", t!=="select");
   const drawTool=["pen","line","arrow","rect"].includes(t);
   if(t==="text"){showProps("text");} else if(drawTool){showProps("draw");} else if(t==="place"){showProps("place");} else if(!sel){showProps(null);}
   $("#stage").style.cursor=(drawTool||["redact","whiteout","marker","place"].includes(t))?"crosshair":"default";
@@ -676,6 +696,8 @@ function promptProfile(){ const n=prompt("שם מלא:",lib.profile.name||""); i
 function updateZoomLbl(){$("#zoomLbl").textContent=Math.round(zoom*100)+"%";}
 $("#btnZoomIn").addEventListener("click",()=>{if(model.length){userZoomed=true;zoom=Math.min(3,zoom+.15);renderAll();}});
 $("#btnZoomOut").addEventListener("click",()=>{if(model.length){userZoomed=true;zoom=Math.max(.3,zoom-.15);renderAll();}});
+window.addEventListener("resize",()=>{ if(!model.length||userZoomed||window.innerWidth>820)return;
+  clearTimeout(window._rz); window._rz=setTimeout(()=>{ zoom=fitZoom(); renderAll(); },300); });
 
 // ================= THUMBNAILS / PAGE OPS =================
 async function renderThumbs(){
