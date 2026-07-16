@@ -61,6 +61,10 @@
   .page canvas.pdf{display:block}
   .overlay{position:absolute;inset:0}
   body.tool-active .overlay{touch-action:none}
+  /* while a creation tool is active, existing items must not swallow the click —
+     otherwise you cannot write/draw on top of an erased area or another element */
+  body.tool-text .ann:not(.text){pointer-events:none}
+  body.tool-draw .ann{pointer-events:none}
   .ann{position:absolute;cursor:move;touch-action:none}
   .ann.selected{outline:2px solid var(--accent2);outline-offset:1px}
   .ann.text{min-width:20px;min-height:1em;white-space:pre;color:#111;padding:1px 2px;
@@ -502,8 +506,11 @@ function curPage(){
   selPage=best; return model[best];
 }
 function addText(p,x,y){
-  const a={id:"a"+(uid++),type:"text",x,y,w:0,h:0,rotation:0,text:"",
-    fontPt:parseFloat($("#pFont").value)||18,color:$("#pColor").value,
+  const fontPt=parseFloat($("#pFont").value)||18;
+  // a.x = the anchor the caret sits on (right edge for RTL); a.y = top of the line,
+  // shifted up so the click lands on the middle of the text, not above it.
+  const a={id:"a"+(uid++),type:"text",x,y:y-fontPt*0.6,w:0,h:0,rotation:0,text:"",
+    fontPt,color:$("#pColor").value,
     family:$("#pFamily").value,bold:false,italic:false,under:false,align:"right"};
   p.annotations.push(a); mountAnn(p,a); return a;
 }
@@ -592,9 +599,21 @@ function applyTextStyle(a){const el=els.get(a.id);if(!el)return;
   el.dir=a.align==="left"?"ltr":"rtl";
 }
 function position(a){const el=els.get(a.id);if(!el)return;
-  el.style.left=a.x*zoom+"px"; el.style.top=a.y*zoom+"px";
-  el.style.transform=`rotate(${a.rotation||0}deg)`; el.style.transformOrigin="center center";
-  if(a.type!=="text"){ el.style.width=a.w*zoom+"px"; el.style.height=a.h*zoom+"px"; }
+  const rot=`rotate(${a.rotation||0}deg)`;
+  el.style.transformOrigin="center center";
+  el.style.top=a.y*zoom+"px";
+  if(a.type==="text"){
+    // anchor the box on a.x so the caret stays exactly where it was clicked:
+    // RTL grows leftward from the anchor, LTR rightward, centered splits it.
+    const pw=effSize(el._page).w;
+    if(a.align==="right"){ el.style.right=(pw-a.x)*zoom+"px"; el.style.left="auto"; el.style.transform=rot; }
+    else if(a.align==="center"){ el.style.left=a.x*zoom+"px"; el.style.right="auto"; el.style.transform=`translateX(-50%) ${rot}`; }
+    else { el.style.left=a.x*zoom+"px"; el.style.right="auto"; el.style.transform=rot; }
+    applyTextStyle(a);
+  } else {
+    el.style.left=a.x*zoom+"px"; el.style.right="auto"; el.style.transform=rot;
+    el.style.width=a.w*zoom+"px"; el.style.height=a.h*zoom+"px";
+  }
 }
 function removeAnn(a){els.get(a.id)?.remove(); els.delete(a.id);
   for(const p of model){const i=p.annotations.indexOf(a);if(i>=0){p.annotations.splice(i,1);break;}}
@@ -678,6 +697,8 @@ document.addEventListener("keydown",e=>{
 $$("button.b[data-tool]").forEach(b=>b.addEventListener("click",()=>setTool(tool===b.dataset.tool?"select":b.dataset.tool)));
 function setTool(t){ tool=t; $$("button.b[data-tool]").forEach(x=>x.classList.toggle("on",x.dataset.tool===t));
   document.body.classList.toggle("tool-active", t!=="select");
+  document.body.classList.toggle("tool-text", t==="text");
+  document.body.classList.toggle("tool-draw", ["pen","marker","arrow","whiteout","redact"].includes(t));
   const drawTool=["pen","line","arrow","rect"].includes(t);
   if(t==="text"){showProps("text");} else if(drawTool){showProps("draw");} else if(t==="place"){showProps("place");} else if(!sel){showProps(null);}
   $("#stage").style.cursor=(drawTool||["redact","whiteout","marker","place"].includes(t))?"crosshair":"default";
@@ -918,12 +939,12 @@ function paintText(ctx,a,RES){
   const fpx=a.fontPt*RES; ctx.fillStyle=a.color; ctx.textBaseline="top";
   ctx.font=`${a.italic?"italic ":""}${a.bold?"bold ":""}${fpx}px ${a.family}`;
   const rtl=a.align!=="left"; ctx.direction=rtl?"rtl":"ltr";
-  const lines=(a.text||"").split("\n"); let widthMax=0; lines.forEach(l=>widthMax=Math.max(widthMax,ctx.measureText(l).width));
+  const lines=(a.text||"").split("\n");
   let y=a.y*RES+fpx*0.12;
-  for(const ln of lines){ const lw=ctx.measureText(ln).width; let x;
-    if(a.align==="center"){ctx.textAlign="center";x=a.x*RES+widthMax/2;}
-    else if(a.align==="left"){ctx.textAlign="left";x=a.x*RES;}
-    else{ctx.textAlign="right";x=a.x*RES+widthMax;}
+  // a.x is the anchor (same as on screen): right edge for RTL, left for LTR, centre for centre.
+  const x=a.x*RES;
+  for(const ln of lines){ const lw=ctx.measureText(ln).width;
+    ctx.textAlign = a.align==="center" ? "center" : (a.align==="left" ? "left" : "right");
     ctx.fillText(ln,x,y);
     if(a.under){const uy=y+fpx*1.02;ctx.strokeStyle=a.color;ctx.lineWidth=Math.max(1,fpx*0.06);
       ctx.beginPath();const ux=a.align==="center"?x-lw/2:(a.align==="left"?x:x-lw);ctx.moveTo(ux,uy);ctx.lineTo(ux+lw,uy);ctx.stroke();}
@@ -965,6 +986,29 @@ $("#btnSplit").addEventListener("click",async()=>{const chosen=model.filter(p=>p
   for(let i=0;i<list.length;i++){const idx=model.indexOf(list[i])+1;
     downloadBlob(new Blob([await buildPdf({pages:[list[i]]})],{type:"application/pdf"}),fileName.replace(/\.pdf$/i,"")+"-עמוד"+idx+".pdf");
     await new Promise(r=>setTimeout(r,300));} toast("פוצל להורדות");});
+
+// ===== programmatic load (desktop app / drag&drop) =====
+window.loadPdfBytes=async(arrayBuf,name)=>{
+  fileName=name||"document.pdf";
+  model=[]; Object.keys(sources).forEach(k=>delete sources[k]);
+  await addSource(arrayBuf);
+  $("#empty")?.remove(); selPage=0; userZoomed=false;
+  zoom=(window.innerWidth<=820?fitZoom():1.4);
+  await renderAll(); renderThumbs(); pushHistory();
+  toast("נטען: "+fileName+" — "+model.length+" עמודים");
+};
+// drag & drop a PDF anywhere on the page
+["dragover","drop"].forEach(ev=>document.addEventListener(ev,e=>e.preventDefault()));
+document.addEventListener("drop",async e=>{
+  const f=[...((e.dataTransfer&&e.dataTransfer.files)||[])].find(x=>/\.pdf$/i.test(x.name));
+  if(f) await window.loadPdfBytes(await f.arrayBuffer(), f.name);
+});
+// Electron desktop: receive the file the app was opened with
+if(window.electronAPI){
+  const take=f=>{ if(f&&f.data) window.loadPdfBytes(new Uint8Array(f.data).buffer, f.name); };
+  window.electronAPI.getInitialFile().then(take).catch(()=>{});
+  if(window.electronAPI.onOpenFile) window.electronAPI.onOpenFile(take);
+}
 
 // side drawer (mobile)
 function openSide(){ $("#side").classList.add("open"); $("#sideBackdrop").classList.add("show"); }
