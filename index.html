@@ -420,7 +420,20 @@ function attachOverlay(overlay,p){
     selPage=model.indexOf(p);
     const pt=localPt(p,e);
     if(tool==="place"&&pendingStamp){ addImageAt(p,pendingStamp.url,pt,pendingStamp); return; }
-    if(tool==="text"){ const a=addText(p,pt.x,pt.y); select(a); setTimeout(()=>els.get(a.id).focus(),0); return; }
+    if(tool==="text"){
+      const a=addText(p,pt.x,pt.y); select(a); setTimeout(()=>els.get(a.id)&&els.get(a.id).focus(),0);
+      const clickY=pt.y;
+      detectStyleAt(p,pt.x,clickY).then(st=>{
+        if(!st||!els.get(a.id)) return;
+        if(st.fontPt) a.fontPt=st.fontPt;
+        if(st.family) a.family=st.family;
+        if(st.color)  a.color=st.color;
+        a.y=clickY-a.fontPt*0.6;              // re-centre for the matched size
+        applyTextStyle(a); position(a);
+        $("#pFont").value=a.fontPt; $("#pFamily").value=a.family; $("#pColor").value=a.color;
+      }).catch(()=>{});
+      return;
+    }
     if(["pen","marker","line","arrow","rect","redact","whiteout"].includes(tool)){ startDraw(p,pt,e,overlay); return; }
     select(null);
   });
@@ -494,7 +507,10 @@ function commitDraw(){
     a={id:"a"+(uid++),type:draw.type,x:draw.x,y:draw.y,w:draw.w,h:draw.h,
       color:draw.color,width:draw.width,fill:draw.fill,rotation:0};
   }
-  p.annotations.push(a); mountAnn(p,a); select(a); pushHistory();
+  p.annotations.push(a); mountAnn(p,a);
+  // an erase should just disappear into the page — no selection, no ✕ handle
+  if(a.type!=="whiteout") select(a); else select(null);
+  pushHistory();
 }
 
 // ================= ANNOTATION FACTORIES =================
@@ -505,6 +521,72 @@ function curPage(){
     const c=w.offsetTop+w.offsetHeight/2; if(Math.abs(c-mid)<bd){bd=Math.abs(c-mid);best=i;}});
   selPage=best; return model[best];
 }
+// ===== match the document's own typography at the click point =====
+const textCache=new Map();
+async function pageTextItems(p){
+  const key=p.id+":"+p.rotation;
+  if(textCache.has(key)) return textCache.get(key);
+  const arr=[];
+  try{
+    if(!p.blank && sources[p.sourceId]){
+      const pg=await sources[p.sourceId].doc.getPage(p.srcIndex);
+      const vp=pg.getViewport({scale:1,rotation:p.rotation});
+      const tc=await pg.getTextContent();
+      for(const it of tc.items){
+        if(!it.str||!it.str.trim()) continue;
+        const m=pdfjsLib.Util.transform(vp.transform,it.transform);
+        const size=Math.hypot(m[2],m[3])||Math.abs(m[3]);
+        if(!size||!isFinite(size)) continue;
+        arr.push({x:m[4], w:it.width||0, size, yBottom:m[5], yTop:m[5]-size,
+          font:(tc.styles&&tc.styles[it.fontName]&&tc.styles[it.fontName].fontFamily)||""});
+      }
+    }
+  }catch(e){}
+  textCache.set(key,arr); return arr;
+}
+function mapFamily(f){
+  const s=(f||"").toLowerCase();
+  if(/david|frank|ruehl/.test(s)) return "David, 'Frank Ruehl', serif";
+  if(/courier|mono/.test(s))      return "'Courier New', monospace";
+  if(/tahoma|verdana/.test(s))    return "Tahoma, sans-serif";
+  if(/georgia/.test(s))           return "Georgia, serif";
+  if(/times|roman|garamond|serif/.test(s)) return "'Times New Roman', serif";
+  return "Arial, sans-serif";
+}
+function sampleTextColor(p,xPt,yPt){
+  try{
+    const pe=pageEls.get(p.id); if(!pe) return null;
+    const cv=pe.canvas, ratio=window.devicePixelRatio||1;
+    const cx=Math.round(xPt*zoom*ratio), cy=Math.round(yPt*zoom*ratio), R=Math.round(22*ratio);
+    const x0=Math.max(0,cx-R), y0=Math.max(0,cy-R);
+    const w=Math.min(cv.width-x0,R*2), h=Math.min(cv.height-y0,R*2);
+    if(w<=0||h<=0) return null;
+    const d=cv.getContext("2d").getImageData(x0,y0,w,h).data;
+    let best=null,bestLum=255;
+    for(let i=0;i<d.length;i+=4){
+      if(d[i+3]<200) continue;
+      const lum=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      if(lum<bestLum){bestLum=lum;best=[d[i],d[i+1],d[i+2]];}
+    }
+    if(!best||bestLum>170) return null;           // nothing dark nearby => no text to match
+    return "#"+best.map(v=>v.toString(16).padStart(2,"0")).join("");
+  }catch(e){ return null; }
+}
+async function detectStyleAt(p,x,y){
+  const out={};
+  const items=await pageTextItems(p);
+  let best=null,bestD=1e9;
+  for(const it of items){
+    const dx=Math.max(it.x-x,0,x-(it.x+it.w));
+    const dy=Math.max(it.yTop-y,0,y-it.yBottom);
+    const d=Math.hypot(dx,dy);
+    if(d<bestD){bestD=d;best=it;}
+  }
+  if(best&&bestD<45){ out.fontPt=Math.max(6,Math.round(best.size)); out.family=mapFamily(best.font); }
+  const c=sampleTextColor(p,x,y); if(c) out.color=c;
+  return out;
+}
+
 function addText(p,x,y){
   const fontPt=parseFloat($("#pFont").value)||18;
   // a.x = the anchor the caret sits on (right edge for RTL); a.y = top of the line,
@@ -553,7 +635,7 @@ function mountAnn(p,a){
   }else if(a.type==="redact"){
     el.style.background="#000";
   }else if(a.type==="whiteout"){
-    el.style.background="#fff"; el.style.outline="1px dashed #cbd5e1";
+    el.style.background="#fff";   // clean cover — no outline, nothing to see
   }else if(a.type==="highlight"){
     el.style.background=hexA("#ffeb3b",0.4);
   }else{ el.appendChild(vecSvg(a)); }
