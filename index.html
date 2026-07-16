@@ -1,6 +1,19 @@
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>עורך PDF — מערכת עריכה מלאה</title>
+
+<!-- PWA: installable app -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#3b82f6" />
+<meta name="description" content="עורך PDF מלא בדפדפן: פתיחה, עריכה, טקסט, ציור, מרקר, איחוד וחתימה — עובד גם ללא אינטרנט." />
+<link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="עורך PDF" />
+
 <style>
   :root{
     --bg:#0e1526; --panel:#182238; --panel2:#243149; --line:#38466a;
@@ -1098,4 +1111,73 @@ function closeSide(){ $("#side").classList.remove("open"); $("#sideBackdrop").cl
 $("#sideToggle").addEventListener("click",()=>{ $("#side").classList.contains("open")?closeSide():openSide(); });
 $("#sideBackdrop").addEventListener("click",closeSide);
 $("#sideClose").addEventListener("click",closeSide);
+</script>
+
+<!-- PWA: install button + service worker -->
+<style>
+  #pwaInstall{
+    position:fixed; inset-block-end:16px; inset-inline-start:16px; z-index:9999;
+    display:none; align-items:center; gap:8px; cursor:pointer;
+    background:linear-gradient(135deg,#3b82f6,#60a5fa); color:#fff;
+    border:none; border-radius:12px; padding:11px 16px;
+    font-family:"Segoe UI",Arial,sans-serif; font-size:14px; font-weight:700;
+    box-shadow:0 8px 24px rgba(59,130,246,.45);
+  }
+  #pwaInstall:active{transform:scale(.97)}
+  #pwaHint{
+    position:fixed; inset-block-end:16px; inset-inline-start:16px; z-index:9999;
+    display:none; max-width:min(320px,86vw);
+    background:#182238; color:#e8eef7; border:1px solid #38466a;
+    border-radius:12px; padding:11px 14px; font-family:"Segoe UI",Arial,sans-serif;
+    font-size:12.5px; line-height:1.55; box-shadow:0 8px 24px rgba(0,0,0,.5); direction:rtl;
+  }
+  #pwaHint b{color:#60a5fa}
+  #pwaHint .x{float:inline-start; margin-inline-start:8px; cursor:pointer; color:#93a2bd; font-weight:700}
+</style>
+<button id="pwaInstall" type="button" dir="rtl">📲 התקן כאפליקציה</button>
+<div id="pwaHint" dir="rtl"></div>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('service-worker.js').catch(function (e) {
+        console.warn('SW registration failed:', e);
+      });
+    });
+  }
+  (function () {
+    var btn = document.getElementById('pwaInstall');
+    var hint = document.getElementById('pwaHint');
+    var deferred = null;
+
+    function standalone(){
+      return window.matchMedia('(display-mode: standalone)').matches ||
+             window.navigator.standalone === true;
+    }
+
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      deferred = e;
+      if (!standalone()) btn.style.display = 'inline-flex';
+    });
+    btn.addEventListener('click', function () {
+      if (!deferred) return;
+      deferred.prompt();
+      deferred.userChoice.finally(function () { deferred = null; btn.style.display = 'none'; });
+    });
+    window.addEventListener('appinstalled', function () {
+      btn.style.display = 'none'; hint.style.display = 'none'; deferred = null;
+    });
+
+    // iOS Safari: no install prompt — show add-to-home-screen instructions.
+    var ua = navigator.userAgent.toLowerCase();
+    var isIOS = /iphone|ipad|ipod/.test(ua);
+    if (isIOS && !standalone()) {
+      var safari = !/crios|fxios|edgios/.test(ua);
+      hint.innerHTML = '<span class="x" onclick="this.parentNode.style.display=\'none\'">✕</span>' +
+        (safari
+          ? 'להתקנה: הקישו על <b>שיתוף</b> ⬆️ ואז <b>הוסף למסך הבית</b>'
+          : 'להתקנה פתחו דף זה ב-<b>Safari</b>, הקישו <b>שיתוף</b> ⬆️ ואז <b>הוסף למסך הבית</b>');
+      hint.style.display = 'block';
+    }
+  })();
 </script>
