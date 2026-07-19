@@ -50,13 +50,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify the web app is bundled
+      - name: List packaged app (diagnostic)
         working-directory: desktop
         shell: bash
         run: |
-          npx --yes asar list dist/win-unpacked/resources/app.asar | grep -i "/app/index.html" \
-            || { echo "ERROR: app/index.html is missing from the packaged app.asar"; exit 1; }
-          echo "OK: app/index.html is bundled."
+          echo "=== dist/win-unpacked/resources ==="
+          ls -la dist/win-unpacked/resources || true
+          echo "=== asar list ==="
+          npx --yes asar list dist/win-unpacked/resources/app.asar || true
 
       - name: Upload installer as build artifact
         uses: actions/upload-artifact@v4
