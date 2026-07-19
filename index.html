@@ -97,12 +97,13 @@
     text-align:center;cursor:pointer;display:none;z-index:3}
   .ann.selected .del,.ann.selected .dup{display:block}
   .ann.text.editing .del,.ann.text.editing .dup,.ann.text.editing .h{display:none!important}
-  /* drag grip for text — shown (like the other handles) when selected but NOT
-     while editing; a visible child inside the editable box breaks its auto-width */
+  /* drag grip for text — visible even while editing (it is contenteditable=false
+     so it does NOT break the editable box's auto-width) */
   .ann .h.mv{left:-10px;bottom:-10px;width:22px;height:22px;border-radius:6px;
     background:var(--accent);color:#fff;font-size:13px;line-height:18px;text-align:center;cursor:move}
   .ann .h.mv::after{content:"✥"}   /* glyph via pseudo-element so it never leaks into the text */
-  /* resize grip position for text (bottom-right corner) */
+  .ann.text.selected .h.mv,.ann.text.editing .h.mv{display:block!important}
+  /* resize grip for text (bottom-right corner) */
   .ann.text .h.br{cursor:nwse-resize}
   #empty{color:var(--muted);margin-top:12vh;font-size:15px;line-height:1.9}
   #empty b{color:var(--text)}
@@ -352,7 +353,15 @@ const els=new Map();           // annId -> DOM element
 const pageEls=new Map();       // pageId -> {wrap, overlay, canvas}
 let draw=null;                 // active drawing op
 const drawStyle={color:"#e11d48",width:3,fill:false};
-let textColor="#000000";   // default colour for NEW text — stays black unless the user picks another
+// Remembered styles for NEW items — updated whenever the user changes the
+// colour/size/font controls, so the last choice sticks for next time.
+const textDefaults={color:"#000000",size:18,family:"Arial, sans-serif"};
+const markStyles={check:{color:"#16a34a",size:24}, cross:{color:"#e11d48",size:24}};
+function rememberStyle(prop,val,ann){
+  const a = ann===undefined ? sel : ann;
+  if(a && a.mark && markStyles[a.mark]){ if(prop==="color"||prop==="size") markStyles[a.mark][prop]=val; }
+  else if(!a || a.type==="text"){ textDefaults[prop]=val; }
+}
 let lib={sigs:[],stamps:[],tpls:[],profile:{name:"",id:""}};
 let pendingStamp=null;   // {url,frac,maxW} for repeated placement ("place" tool)
 let pendingMark=null;    // {ch,color} waiting to be placed by a click ("markplace" tool)
@@ -446,19 +455,9 @@ function attachOverlay(overlay,p){
     if(tool==="markplace"&&pendingMark){ placeMarkAt(p,pt.x,pt.y); return; }
     if(tool==="place"&&pendingStamp){ addImageAt(p,pendingStamp.url,pt,pendingStamp); return; }
     if(tool==="text"){
+      // Use the remembered defaults (size/colour/font) — no auto-sampling from the
+      // document, so the user's last choice always sticks.
       const a=addText(p,pt.x,pt.y); select(a); setTimeout(()=>els.get(a.id)&&els.get(a.id).focus(),0);
-      const clickY=pt.y;
-      detectStyleAt(p,pt.x,clickY).then(st=>{
-        if(!st||!els.get(a.id)) return;
-        if(st.fontPt) a.fontPt=st.fontPt;
-        if(st.family) a.family=st.family;
-        // NOTE: colour is intentionally NOT auto-sampled from the document —
-        // new text keeps the chosen colour (black by default) instead of
-        // picking up nearby text colours (which made it come out red).
-        a.y=clickY-a.fontPt*0.6;              // re-centre for the matched size
-        applyTextStyle(a); position(a);
-        $("#pFont").value=a.fontPt; $("#pFamily").value=a.family;
-      }).catch(()=>{});
       return;
     }
     if(["pen","marker","line","arrow","rect","redact","whiteout"].includes(tool)){ startDraw(p,pt,e,overlay); return; }
@@ -615,12 +614,12 @@ async function detectStyleAt(p,x,y){
 }
 
 function addText(p,x,y){
-  const fontPt=parseFloat($("#pFont").value)||18;
+  const fontPt=textDefaults.size;
   // a.x = the anchor the caret sits on (right edge for RTL); a.y = top of the line,
   // shifted up so the click lands on the middle of the text, not above it.
   const a={id:"a"+(uid++),type:"text",x,y:y-fontPt*0.6,w:0,h:0,rotation:0,text:"",
-    fontPt,color:textColor,
-    family:$("#pFamily").value,bold:false,italic:false,under:false,align:"right"};
+    fontPt,color:textDefaults.color,
+    family:textDefaults.family,bold:false,italic:false,under:false,align:"right"};
   p.annotations.push(a); mountAnn(p,a); return a;
 }
 async function addImageAt(p,url,pt,{frac=0.15,maxW=110}={}){
@@ -673,7 +672,7 @@ function mountAnn(p,a){
   el.appendChild(del); el.appendChild(dup);
   el.appendChild(mkH("br"));   // resize grip (text: scales font size; others: box size)
   el.appendChild(mkH("rot"));
-  if(a.type==="text"){ const mv=mkH("mv"); mv.title="גרור להזזה"; el.appendChild(mv); }
+  if(a.type==="text"){ const mv=mkH("mv"); mv.title="גרור להזזה"; mv.contentEditable="false"; el.appendChild(mv); }
   pe.overlay.appendChild(el);
   position(a); enableDrag(a);
   el.addEventListener("pointerdown",e=>{ if(tool==="select"||a.type==="text") select(a); });
@@ -751,9 +750,9 @@ function showProps(kind){
   $("#dFillWrap").style.display=(sel&&sel.type==="rect")||tool==="rect"?"inline-flex":"none";
 }
 // text controls
-$("#pFont").addEventListener("input",()=>editSel(a=>a.fontPt=parseFloat($("#pFont").value)||18));
-$("#pColor").addEventListener("input",()=>{ textColor=$("#pColor").value; editSel(a=>a.color=textColor); });
-$("#pFamily").addEventListener("change",()=>editSel(a=>a.family=$("#pFamily").value));
+$("#pFont").addEventListener("input",()=>{ const v=parseFloat($("#pFont").value)||18; rememberStyle("size",v); editSel(a=>a.fontPt=v); });
+$("#pColor").addEventListener("input",()=>{ const v=$("#pColor").value; rememberStyle("color",v); editSel(a=>a.color=v); });
+$("#pFamily").addEventListener("change",()=>{ const v=$("#pFamily").value; rememberStyle("family",v); editSel(a=>a.family=v); });
 $("#pBold").addEventListener("click",()=>editSel(a=>a.bold=!a.bold,true));
 $("#pItalic").addEventListener("click",()=>editSel(a=>a.italic=!a.italic,true));
 $("#pUnder").addEventListener("click",()=>editSel(a=>a.under=!a.under,true));
@@ -797,7 +796,9 @@ function enableDrag(a){
           a.h=a.aspect?a.w/a.aspect:Math.max(6,oh+dy);
           if(a.natW){/* vec scales via viewBox */} } }
       position(a); if(mode==="move") autoScroll(ev); };
-    el.onpointerup=()=>{el.onpointermove=null;el.onpointerup=null;pushHistory();}; e.preventDefault(); }
+    el.onpointerup=()=>{el.onpointermove=null;el.onpointerup=null;
+      if(mode==="resize"&&a.type==="text"){ rememberStyle("size",a.fontPt,a); }  // resized size sticks for next time
+      pushHistory();}; e.preventDefault(); }
 }
 function autoScroll(ev){ const s=$("#stage"); const r=s.getBoundingClientRect(); const m=44;
   if(ev.clientY>r.bottom-m) s.scrollTop+=14; else if(ev.clientY<r.top+m) s.scrollTop-=14;
@@ -826,19 +827,20 @@ setTool("select");
 
 // ===== quick marks: check (✓) / cross (✗) — click the button, then click on the
 //        document where the mark should go (place mode), not immediately. =====
-function startMark(ch,color){
+function startMark(kind){
   if(!curPage()){ toast("קודם פתח PDF"); return; }
-  pendingMark={ch,color};
+  pendingMark={kind, ch: kind==="check"?"✓":"✗"};
   setTool("markplace");
   toast("לחץ במקום שבו למקם את הסימן");
 }
 function placeMarkAt(p,x,y){
   if(!pendingMark) return;
-  addTextValue(p,pendingMark.ch,{x,y,style:{color:pendingMark.color,fontPt:24,bold:true,align:"center"}});
-  pendingMark=null; setTool("select");   // placed → select mode so it can be dragged/resized
+  const st=markStyles[pendingMark.kind];   // remembered colour + size for this symbol
+  addTextValue(p,pendingMark.ch,{x,y,style:{color:st.color,fontPt:st.size,bold:true,align:"center",mark:pendingMark.kind}});
+  pendingMark=null; setTool("select");     // placed → select mode so it can be dragged/resized
 }
-$("#btnCheck")&&$("#btnCheck").addEventListener("click",()=>startMark("✓","#16a34a"));
-$("#btnCross")&&$("#btnCross").addEventListener("click",()=>startMark("✗","#e11d48"));
+$("#btnCheck")&&$("#btnCheck").addEventListener("click",()=>startMark("check"));
+$("#btnCross")&&$("#btnCross").addEventListener("click",()=>startMark("cross"));
 
 // ================= INSERT MENU =================
 $("#insertBtn").addEventListener("click",e=>{e.stopPropagation();$("#insertMenu").classList.toggle("open");});
