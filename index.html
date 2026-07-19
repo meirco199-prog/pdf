@@ -1163,8 +1163,30 @@ $("#sideClose").addEventListener("click",closeSide);
 <div id="pwaHint" dir="rtl"></div>
 <script>
   if ('serviceWorker' in navigator) {
+    var swReloaded = false;
+    // When a new service worker takes control, reload once so the newest
+    // version of the app is shown (fixes "the site didn't update").
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (swReloaded) return;
+      swReloaded = true;
+      window.location.reload();
+    });
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('service-worker.js').catch(function (e) {
+      navigator.serviceWorker.register('service-worker.js').then(function (reg) {
+        // Check for a new version now and periodically.
+        reg.update();
+        setInterval(function () { reg.update(); }, 60 * 60 * 1000);
+        reg.addEventListener('updatefound', function () {
+          var nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener('statechange', function () {
+            // A new worker is ready while an old one controls the page → activate it.
+            if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+              nw.postMessage('skipWaiting');
+            }
+          });
+        });
+      }).catch(function (e) {
         console.warn('SW registration failed:', e);
       });
     });
