@@ -1,10 +1,15 @@
 name: Build Windows Installer
 
 on:
-  workflow_dispatch:        # allow manual runs from the Actions tab
+  workflow_dispatch:        # run manually from the Actions tab
+    inputs:
+      version:
+        description: 'Release tag to publish'
+        required: false
+        default: 'v1.0.0'
   push:
     tags:
-      - 'v*'                 # pushing a tag like v1.0.0 builds AND publishes a Release
+      - 'v*'                 # pushing a tag like v1.0.0 also builds + publishes
 
 permissions:
   contents: write           # needed to create the Release
@@ -46,12 +51,23 @@ jobs:
           path: desktop/dist/*.exe
           if-no-files-found: error
 
-      - name: Publish Release (on tag)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish / refresh Release
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" desktop/dist/*.exe \
-            --title "עורך PDF — התקנה ל-Windows (${GITHUB_REF_NAME})" \
-            --notes "קובץ ההתקנה של עורך ה-PDF ל-Windows. הורידו את קובץ ה-.exe והריצו אותו כדי להתקין. לאחר ההתקנה קובצי PDF יכולים להיפתח ישירות בתוכנה (קליק ימני → פתח באמצעות → עורך PDF)."
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          fi
+          NOTES="קובץ ההתקנה של עורך ה-PDF ל-Windows. הורידו את קובץ ה-.exe והריצו אותו. במסך אזהרה של Windows: לחצו \"מידע נוסף\" ואז \"הפעל בכל זאת\". לאחר ההתקנה אפשר לפתוח PDF בתוכנה דרך קליק ימני → פתח באמצעות → עורך PDF."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" desktop/dist/*.exe --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" desktop/dist/*.exe \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "עורך PDF — התקנה ל-Windows ($TAG)" \
+              --notes "$NOTES"
+          fi
