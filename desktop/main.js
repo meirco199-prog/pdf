@@ -1,20 +1,52 @@
 // Electron main process for "עורך PDF" desktop app.
-// Opens a PDF that was double-clicked / "opened with" this app, and routes
-// subsequent opens to the running window.
+// The editor is served from a tiny built-in HTTP server on 127.0.0.1 (the same
+// setup it was built and tested against) instead of file://, which avoids the
+// ERR_FAILED that large local pages hit under the file:// protocol.
 const { app, BrowserWindow, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const urlmod = require('url');
 
-// Some Windows GPU drivers render an Electron window as a black screen.
-// Disabling hardware acceleration is the standard, safe fix.
+// Disabling hardware acceleration avoids black-screen issues on some Windows GPUs.
 app.disableHardwareAcceleration();
-app.commandLine.appendSwitch('disable-gpu');
 
 let mainWindow = null;
 let pendingFile = null; // a PDF path waiting to be handed to the renderer
+let appBaseUrl = null;  // http://127.0.0.1:<port> once the local server is up
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.svg': 'image/svg+xml', '.webp': 'image/webp', '.mp4': 'video/mp4',
+  '.webmanifest': 'application/manifest+json', '.json': 'application/json; charset=utf-8',
+  '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf'
+};
+
+function startServer(rootDir) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      let pathname = '/index.html';
+      try { pathname = decodeURIComponent(urlmod.parse(req.url).pathname || '/'); } catch (e) { /* ignore */ }
+      if (pathname === '/' || pathname === '') pathname = '/index.html';
+      const safe = path.normalize(pathname).replace(/^([\\/]|\.\.[\\/])+/, '');
+      const filePath = path.join(rootDir, safe);
+      fs.readFile(filePath, (err, data) => {
+        if (err) { res.statusCode = 404; res.end('Not found'); return; }
+        const ext = path.extname(filePath).toLowerCase();
+        res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream');
+        res.end(data);
+      });
+    });
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      resolve('http://127.0.0.1:' + server.address().port);
+    });
+  });
+}
 
 function findPdfArg(argv) {
-  // argv includes the executable and possibly Chromium switches; pick a real .pdf path
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a && !a.startsWith('--') && /\.pdf$/i.test(a)) {
@@ -27,7 +59,6 @@ function findPdfArg(argv) {
 function readFilePayload(p) {
   try {
     const buf = fs.readFileSync(p);
-    // Array of byte values — the renderer rebuilds it via new Uint8Array(data).buffer
     return { name: path.basename(p), data: Array.from(buf) };
   } catch (e) {
     return null;
@@ -44,10 +75,8 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  // File the app was launched with (Windows file association passes the path here).
   pendingFile = findPdfArg(process.argv);
 
-  // A second launch (e.g. double-clicking another PDF) is routed to this instance.
   app.on('second-instance', (event, argv) => {
     const p = findPdfArg(argv);
     if (mainWindow) {
@@ -59,7 +88,6 @@ if (!gotLock) {
     }
   });
 
-  // macOS "open with" event.
   app.on('open-file', (event, p) => {
     event.preventDefault();
     if (mainWindow) sendFileToWindow(p);
@@ -84,29 +112,32 @@ if (!gotLock) {
     });
     Menu.setApplicationMenu(null);
 
-    const indexPath = path.join(__dirname, 'app', 'index.html');
-    if (fs.existsSync(indexPath)) {
-      mainWindow.loadFile(indexPath);
+    if (appBaseUrl) {
+      mainWindow.loadURL(appBaseUrl + '/index.html');
     } else {
-      showError(mainWindow, 'קובץ האפליקציה לא נמצא:\n' + indexPath);
+      // Fallback if the local server did not start.
+      const indexPath = path.join(__dirname, 'app', 'index.html');
+      if (fs.existsSync(indexPath)) mainWindow.loadFile(indexPath);
+      else showError(mainWindow, 'האפליקציה לא נטענה (שרת מקומי לא עלה).');
     }
 
-    // External links (Gmail, WhatsApp Web, …) open in the system default browser (Chrome),
-    // never inside the app. Blob/data URLs (PDF preview) are allowed to open a window.
+    // In-app pages stay in the app; external links (Gmail, WhatsApp Web) open in Chrome.
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (appBaseUrl && url.startsWith(appBaseUrl)) return { action: 'allow' };
       if (/^https?:\/\//i.test(url)) { shell.openExternal(url); return { action: 'deny' }; }
-      if (/^(blob|data):/i.test(url)) { return { action: 'allow' }; }
+      if (/^(blob|data):/i.test(url)) return { action: 'allow' };
       return { action: 'deny' };
     });
     mainWindow.webContents.on('will-navigate', (e, url) => {
-      if (/^https?:\/\//i.test(url) && url !== mainWindow.webContents.getURL()) {
+      if (/^https?:\/\//i.test(url) && (!appBaseUrl || !url.startsWith(appBaseUrl))) {
         e.preventDefault();
         shell.openExternal(url);
       }
     });
 
-    // If the page ever fails to load, show a readable message instead of a black screen.
+    // Never leave the user on a blank/black window — show a readable message.
     mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+      if (code === -3) return; // ERR_ABORTED (e.g. a redirect) — not a real failure
       showError(mainWindow, 'טעינת האפליקציה נכשלה\n' + desc + ' (' + code + ')\n' + url);
     });
     mainWindow.webContents.on('render-process-gone', (_e, details) => {
@@ -127,12 +158,10 @@ if (!gotLock) {
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
   }
 
-  // Open a URL in the default browser (used by the Gmail / WhatsApp Web buttons).
   ipcMain.handle('open-external', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
   });
 
-  // Renderer asks (on load) for the file the app was opened with.
   ipcMain.handle('get-initial-file', () => {
     if (!pendingFile) return null;
     const payload = readFilePayload(pendingFile);
@@ -140,7 +169,14 @@ if (!gotLock) {
     return payload;
   });
 
-  app.whenReady().then(createWindow);
+  app.whenReady().then(async () => {
+    try {
+      appBaseUrl = await startServer(path.join(__dirname, 'app'));
+    } catch (e) {
+      appBaseUrl = null;
+    }
+    createWindow();
+  });
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
