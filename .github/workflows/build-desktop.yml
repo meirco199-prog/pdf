@@ -56,8 +56,10 @@ jobs:
         run: |
           echo "=== dist/win-unpacked/resources ==="
           ls -la dist/win-unpacked/resources || true
-          echo "=== asar list ==="
-          npx --yes asar list dist/win-unpacked/resources/app.asar || true
+          echo "=== dist/win-unpacked/resources/app ==="
+          ls -la dist/win-unpacked/resources/app || true
+          echo "=== resources/app/app (web files) ==="
+          ls -la dist/win-unpacked/resources/app/app || true
 
       - name: Upload installer as build artifact
         uses: actions/upload-artifact@v4

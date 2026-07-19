@@ -198,6 +198,7 @@
       <button data-ins="id">🪪 תעודת זהות</button>
       <button data-ins="const">📌 טקסט קבוע…</button>
       <button data-ins="profile">⚙️ הגדר שם/ת״ז…</button>
+      <button data-ins="setmail">📧 הגדר מייל לשליחה…</button>
     </div>
   </div>
   <button class="b" id="btnTemplates" title="תבניות וספרייה">🗂️ <span class="lbl">תבניות</span></button>
@@ -847,7 +848,8 @@ $("#insertBtn").addEventListener("click",e=>{e.stopPropagation();$("#insertMenu"
 document.addEventListener("click",()=>$("#insertMenu").classList.remove("open"));
 $("#insertMenu .pop").addEventListener("click",e=>{e.stopPropagation();});
 $$("#insertMenu .pop button").forEach(b=>b.addEventListener("click",()=>{
-  $("#insertMenu").classList.remove("open"); const k=b.dataset.ins; const p=curPage(); if(!p&&k!=="profile"&&k!=="const"){toast("קודם פתח PDF");return;}
+  $("#insertMenu").classList.remove("open"); const k=b.dataset.ins; const p=curPage(); if(!p&&k!=="profile"&&k!=="const"&&k!=="setmail"){toast("קודם פתח PDF");return;}
+  if(k==="setmail"){ setGmailFrom(); return; }
   if(k==="date") addTextValue(p,todayStr(),{x:60,y:60});
   else if(k==="name"){ if(!lib.profile.name){promptProfile();return;} addTextValue(p,lib.profile.name,{x:60,y:100}); }
   else if(k==="id"){ if(!lib.profile.id){promptProfile();return;} addTextValue(p,"ת״ז: "+lib.profile.id,{x:60,y:140}); }
@@ -1123,14 +1125,25 @@ $("#btnWhatsapp").addEventListener("click",async()=>{if(!needPdf())return;
   downloadBlob(await getBlob({pages:selectedPages()}));
   toast("הקובץ הורד — גררו אותו לצ׳אט ב-WhatsApp Web");
   openLink("https://web.whatsapp.com/","whatsapp_web");});
+// The Gmail account the message opens from (chosen by the user, saved locally).
+function gmailFrom(){ return (localStorage.getItem("pdfed_gmail_from")||"").trim(); }
+function setGmailFrom(){
+  const v=prompt("מאיזו כתובת Gmail לשלוח? (למשל office@gmail.com)\nהשאירו ריק כדי להשתמש בחשבון ברירת המחדל:", gmailFrom());
+  if(v!==null){ localStorage.setItem("pdfed_gmail_from", v.trim());
+    toast(v.trim()? "ישלח מהחשבון: "+v.trim() : "ישלח מחשבון ברירת המחדל"); }
+}
 $("#btnEmail").addEventListener("click",async()=>{if(!needPdf())return;
   if(isMobile()){ const f=await getFile({pages:selectedPages()});
     if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f],title:outName(),text:"מצורף מסמך"});return;}catch(e){}} }
-  // Desktop: download the PDF and open a Gmail compose window in the browser (not Outlook).
+  // Desktop: pick the sending account once, then open a Gmail compose window (not Outlook).
+  let from=gmailFrom();
+  if(!from){ setGmailFrom(); from=gmailFrom(); }
   downloadBlob(await getBlob({pages:selectedPages()}));
   toast("הקובץ הורד — צרפו אותו להודעה ב-Gmail");
-  const su=encodeURIComponent("מסמך מצורף"), body=encodeURIComponent("שלום,\nמצורף המסמך (יש לצרף את הקובץ שהורד).\n");
-  openLink("https://mail.google.com/mail/?view=cm&fs=1&tf=1&su="+su+"&body="+body,"gmail_compose");});
+  const su=encodeURIComponent("מסמך מצורף"), body=encodeURIComponent("שלום,\nמצורף המסמך.\n");
+  let url="https://mail.google.com/mail/?view=cm&fs=1&tf=1&su="+su+"&body="+body;
+  if(from) url+="&authuser="+encodeURIComponent(from);
+  openLink(url,"gmail_compose");});
 
 // selected pages export / split
 $("#btnExportSel").addEventListener("click",async()=>{const sel=model.filter(p=>p.checked);
