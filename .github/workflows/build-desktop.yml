@@ -10,6 +10,12 @@ on:
   push:
     tags:
       - 'v*'                 # pushing a tag like v1.0.0 also builds + publishes
+    branches:
+      - main                 # build when the desktop app or the editor changes
+    paths:
+      - 'desktop/**'
+      - 'index.html'
+      - '.github/workflows/build-desktop.yml'
 
 permissions:
   contents: write           # needed to create the Release
@@ -57,10 +63,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          TAG="${GITHUB_REF_NAME}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.version }}"
-          fi
+          TAG="${{ github.event.inputs.version }}"
+          if [ -z "$TAG" ]; then TAG="v1.0.0"; fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then TAG="$GITHUB_REF_NAME"; fi
           NOTES="קובץ ההתקנה של עורך ה-PDF ל-Windows. הורידו את קובץ ה-.exe והריצו אותו. במסך אזהרה של Windows: לחצו \"מידע נוסף\" ואז \"הפעל בכל זאת\". לאחר ההתקנה אפשר לפתוח PDF בתוכנה דרך קליק ימני → פתח באמצעות → עורך PDF."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" desktop/dist/*.exe --repo "$GITHUB_REPOSITORY" --clobber
