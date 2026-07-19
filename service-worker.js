@@ -1,7 +1,7 @@
-// Service worker for the "עורך PDF" PWA (installability + full offline).
-// The whole app lives in index.html (libraries are inlined), so caching
-// the shell and icons is enough to run entirely offline.
-const CACHE = 'pdf-editor-v1';
+// Service worker for the "עורך PDF" PWA (installability + offline).
+// v2: network-first for the page itself so new deploys always show up,
+// cache-first for the static icons.
+const CACHE = 'pdf-editor-v2';
 
 const ASSETS = [
   './',
@@ -31,6 +31,11 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Allow the page to trigger an immediate update.
+self.addEventListener('message', (event) => {
+  if (event.data === 'skipWaiting') self.skipWaiting();
+});
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -38,20 +43,39 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // pass through cross-origin requests
 
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req)
+  // Navigations + the HTML document: NETWORK-FIRST so a new deploy is picked up
+  // immediately; fall back to cache only when offline.
+  const isDoc = req.mode === 'navigate' ||
+                (req.destination === 'document') ||
+                url.pathname.endsWith('/') ||
+                url.pathname.endsWith('index.html');
+
+  if (isDoc) {
+    event.respondWith(
+      fetch(req)
         .then((res) => {
-          if (res && res.status === 200 && res.type === 'basic') {
+          if (res && res.status === 200) {
             const copy = res.clone();
             caches.open(CACHE).then((cache) => cache.put(req, copy));
           }
           return res;
         })
-        .catch(() =>
-          req.mode === 'navigate' ? caches.match('./index.html') : undefined
-        );
+        .catch(() => caches.match(req).then((c) => c || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // Static assets (icons, etc.): cache-first.
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+      return fetch(req).then((res) => {
+        if (res && res.status === 200 && res.type === 'basic') {
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put(req, copy));
+        }
+        return res;
+      });
     })
   );
 });
