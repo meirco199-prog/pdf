@@ -6,9 +6,10 @@
   "main": "main.js",
   "author": "Yahav",
   "license": "MIT",
+  "repository": "https://github.com/meirco199-prog/pdf",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win --x64"
+    "dist": "electron-builder --win --x64 --publish never"
   },
   "devDependencies": {
     "electron": "^31.7.7",
@@ -18,6 +19,7 @@
     "appId": "com.yahav.pdfeditor",
     "productName": "עורך PDF",
     "artifactName": "PDF-Editor-Setup-${version}.${ext}",
+    "publish": null,
     "directories": {
       "output": "dist"
     },
