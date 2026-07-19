@@ -1210,7 +1210,7 @@ $("#sideClose").addEventListener("click",closeSide);
 <button id="pwaInstall" type="button" dir="rtl">📲 התקן כאפליקציה</button>
 <div id="pwaHint" dir="rtl"></div>
 <script>
-  if ('serviceWorker' in navigator) {
+  if (!window.electronAPI && 'serviceWorker' in navigator) {
     var swReloaded = false;
     // When a new service worker takes control, reload once so the newest
     // version of the app is shown (fixes "the site didn't update").
