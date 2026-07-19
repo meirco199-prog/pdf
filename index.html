@@ -97,6 +97,11 @@
     text-align:center;cursor:pointer;display:none;z-index:3}
   .ann.selected .del,.ann.selected .dup{display:block}
   .ann.text.editing .del,.ann.text.editing .dup,.ann.text.editing .h{display:none!important}
+  /* drag grip for text — always reachable so text can be moved after typing */
+  .ann .h.mv{left:-10px;bottom:-10px;width:22px;height:22px;border-radius:6px;
+    background:var(--accent);color:#fff;font-size:13px;line-height:18px;text-align:center;cursor:move}
+  .ann .h.mv::after{content:"✥"}   /* glyph via pseudo-element so it never leaks into the text */
+  .ann.text.selected .h.mv,.ann.text.editing .h.mv{display:block!important}
   #empty{color:var(--muted);margin-top:12vh;font-size:15px;line-height:1.9}
   #empty b{color:var(--text)}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;
@@ -172,6 +177,8 @@
   <button class="b" data-tool="arrow" title="חץ">➘<span class="lbl">חץ</span></button>
   <button class="b" data-tool="whiteout" title="מחיקה — כיסוי לבן">🩹<span class="lbl">מחיקה</span></button>
   <button class="b" data-tool="redact" title="השחרה קבועה (שחור)">⬛<span class="lbl">השחרה</span></button>
+  <button class="b" id="btnCheck" title="הוסף סימן וי ✓ — גרור למיקום">✔️<span class="lbl">וי</span></button>
+  <button class="b" id="btnCross" title="הוסף סימן איקס ✗ — גרור למיקום">✖️<span class="lbl">איקס</span></button>
   <button class="b" id="btnSign" title="חתימה">✍️<span class="lbl">חתימה</span></button>
   <button class="b" id="btnStamp" title="חותמת">🔖<span class="lbl">חותמת</span></button>
   <button class="b" id="btnImage" title="תמונה / לוגו">🖼️<span class="lbl">תמונה</span></button>
@@ -222,7 +229,7 @@
         <option value="Georgia, serif">Georgia</option>
       </select></label>
     <label>גודל <input type="number" id="pFont" min="6" max="200" value="18"></label>
-    <label>צבע <input type="color" id="pColor" value="#111111"></label>
+    <label>צבע <input type="color" id="pColor" value="#000000"></label>
     <button class="b sm" id="pBold" title="מודגש"><b>B</b></button>
     <button class="b sm" id="pItalic" title="נטוי"><i>I</i></button>
     <button class="b sm" id="pUnder" title="קו תחתון"><u>U</u></button>
@@ -440,10 +447,12 @@ function attachOverlay(overlay,p){
         if(!st||!els.get(a.id)) return;
         if(st.fontPt) a.fontPt=st.fontPt;
         if(st.family) a.family=st.family;
-        if(st.color)  a.color=st.color;
+        // NOTE: colour is intentionally NOT auto-sampled from the document —
+        // new text keeps the chosen colour (black by default) instead of
+        // picking up nearby text colours (which made it come out red).
         a.y=clickY-a.fontPt*0.6;              // re-centre for the matched size
         applyTextStyle(a); position(a);
-        $("#pFont").value=a.fontPt; $("#pFamily").value=a.family; $("#pColor").value=a.color;
+        $("#pFont").value=a.fontPt; $("#pFamily").value=a.family;
       }).catch(()=>{});
       return;
     }
@@ -629,7 +638,9 @@ async function addImageTo(p,url,{frac=0.22,maxW=180}={}){
 function addTextValue(p,text,opts={}){
   const a=addText(p,opts.x??40,opts.y??40); a.text=text;
   Object.assign(a,opts.style||{});
-  const el=els.get(a.id); el.textContent=text; applyTextStyle(a); select(a); pushHistory(); return a;
+  // insert the text WITHOUT wiping the handle children mountAnn added
+  const el=els.get(a.id); el.insertBefore(document.createTextNode(text), el.firstChild);
+  applyTextStyle(a); select(a); pushHistory(); return a;
 }
 
 // ================= MOUNT / STYLE =================
@@ -657,6 +668,7 @@ function mountAnn(p,a){
   el.appendChild(del); el.appendChild(dup);
   if(a.type!=="text"){ el.appendChild(mkH("br")); }
   el.appendChild(mkH("rot"));
+  if(a.type==="text"){ const mv=mkH("mv"); mv.title="גרור להזזה"; el.appendChild(mv); }
   pe.overlay.appendChild(el);
   position(a); enableDrag(a);
   el.addEventListener("pointerdown",e=>{ if(tool==="select"||a.type==="text") select(a); });
@@ -755,13 +767,15 @@ function refreshVec(a){const el=els.get(a.id);if(!el)return;const old=el.querySe
 
 // ================= DRAG / RESIZE / ROTATE =================
 function enableDrag(a){
-  const el=els.get(a.id); const br=el.querySelector(".h.br"), rot=el.querySelector(".h.rot");
+  const el=els.get(a.id); const br=el.querySelector(".h.br"), rot=el.querySelector(".h.rot"), mv=el.querySelector(".h.mv");
   let mode=null,sx,sy,ox,oy,ow,oh,cx,cy,a0;
   el.addEventListener("pointerdown",e=>{
     if(a.type==="text"&&document.activeElement===el)return;
     if(tool!=="select"&&tool!=="place")return;
     mode="move"; start(e);
   });
+  // dedicated grip: drag text by its handle regardless of tool or edit state
+  mv&&mv.addEventListener("pointerdown",e=>{e.stopPropagation();select(a);mode="move";start(e);});
   br&&br.addEventListener("pointerdown",e=>{e.stopPropagation();mode="resize";start(e);});
   rot&&rot.addEventListener("pointerdown",e=>{e.stopPropagation();mode="rotate";
     const r=el.getBoundingClientRect();cx=r.left+r.width/2;cy=r.top+r.height/2;a0=a.rotation||0;
@@ -800,6 +814,17 @@ function setTool(t){ tool=t; $$("button.b[data-tool]").forEach(x=>x.classList.to
 }
 $("#placeDone").addEventListener("click",()=>{ pendingStamp=null; setTool("select"); toast("סיום הצבה"); });
 setTool("select");
+
+// ===== quick marks: check (✓) / cross (✗) =====
+function addMark(ch,color){
+  const p=curPage(); if(!p){toast("קודם פתח PDF");return;}
+  const eff=effSize(p);
+  addTextValue(p,ch,{x:eff.w/2,y:eff.h*0.16,style:{color,fontPt:24,bold:true,align:"center"}});
+  setTool("select");                 // so it can be dragged right away
+  toast("נוסף — גרור למיקום הרצוי");
+}
+$("#btnCheck")&&$("#btnCheck").addEventListener("click",()=>addMark("✓","#16a34a"));
+$("#btnCross")&&$("#btnCross").addEventListener("click",()=>addMark("✗","#e11d48"));
 
 // ================= INSERT MENU =================
 $("#insertBtn").addEventListener("click",e=>{e.stopPropagation();$("#insertMenu").classList.toggle("open");});
