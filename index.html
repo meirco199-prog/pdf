@@ -97,11 +97,13 @@
     text-align:center;cursor:pointer;display:none;z-index:3}
   .ann.selected .del,.ann.selected .dup{display:block}
   .ann.text.editing .del,.ann.text.editing .dup,.ann.text.editing .h{display:none!important}
-  /* drag grip for text — always reachable so text can be moved after typing */
+  /* drag grip for text — shown (like the other handles) when selected but NOT
+     while editing; a visible child inside the editable box breaks its auto-width */
   .ann .h.mv{left:-10px;bottom:-10px;width:22px;height:22px;border-radius:6px;
     background:var(--accent);color:#fff;font-size:13px;line-height:18px;text-align:center;cursor:move}
   .ann .h.mv::after{content:"✥"}   /* glyph via pseudo-element so it never leaks into the text */
-  .ann.text.selected .h.mv,.ann.text.editing .h.mv{display:block!important}
+  /* resize grip position for text (bottom-right corner) */
+  .ann.text .h.br{cursor:nwse-resize}
   #empty{color:var(--muted);margin-top:12vh;font-size:15px;line-height:1.9}
   #empty b{color:var(--text)}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;
@@ -350,8 +352,10 @@ const els=new Map();           // annId -> DOM element
 const pageEls=new Map();       // pageId -> {wrap, overlay, canvas}
 let draw=null;                 // active drawing op
 const drawStyle={color:"#e11d48",width:3,fill:false};
+let textColor="#000000";   // default colour for NEW text — stays black unless the user picks another
 let lib={sigs:[],stamps:[],tpls:[],profile:{name:"",id:""}};
 let pendingStamp=null;   // {url,frac,maxW} for repeated placement ("place" tool)
+let pendingMark=null;    // {ch,color} waiting to be placed by a click ("markplace" tool)
 
 // ================= UTIL =================
 function toast(m,ms=2600){const t=$("#toast");t.textContent=m;t.classList.add("show");
@@ -439,6 +443,7 @@ function attachOverlay(overlay,p){
     if(e.target!==overlay) return;
     selPage=model.indexOf(p);
     const pt=localPt(p,e);
+    if(tool==="markplace"&&pendingMark){ placeMarkAt(p,pt.x,pt.y); return; }
     if(tool==="place"&&pendingStamp){ addImageAt(p,pendingStamp.url,pt,pendingStamp); return; }
     if(tool==="text"){
       const a=addText(p,pt.x,pt.y); select(a); setTimeout(()=>els.get(a.id)&&els.get(a.id).focus(),0);
@@ -614,7 +619,7 @@ function addText(p,x,y){
   // a.x = the anchor the caret sits on (right edge for RTL); a.y = top of the line,
   // shifted up so the click lands on the middle of the text, not above it.
   const a={id:"a"+(uid++),type:"text",x,y:y-fontPt*0.6,w:0,h:0,rotation:0,text:"",
-    fontPt,color:$("#pColor").value,
+    fontPt,color:textColor,
     family:$("#pFamily").value,bold:false,italic:false,under:false,align:"right"};
   p.annotations.push(a); mountAnn(p,a); return a;
 }
@@ -666,7 +671,7 @@ function mountAnn(p,a){
   const del=mkBtn("del","✕",e=>{e.stopPropagation();removeAnn(a);pushHistory();});
   const dup=mkBtn("dup","⧉",e=>{e.stopPropagation();duplicate(a);});
   el.appendChild(del); el.appendChild(dup);
-  if(a.type!=="text"){ el.appendChild(mkH("br")); }
+  el.appendChild(mkH("br"));   // resize grip (text: scales font size; others: box size)
   el.appendChild(mkH("rot"));
   if(a.type==="text"){ const mv=mkH("mv"); mv.title="גרור להזזה"; el.appendChild(mv); }
   pe.overlay.appendChild(el);
@@ -747,7 +752,7 @@ function showProps(kind){
 }
 // text controls
 $("#pFont").addEventListener("input",()=>editSel(a=>a.fontPt=parseFloat($("#pFont").value)||18));
-$("#pColor").addEventListener("input",()=>editSel(a=>a.color=$("#pColor").value));
+$("#pColor").addEventListener("input",()=>{ textColor=$("#pColor").value; editSel(a=>a.color=textColor); });
 $("#pFamily").addEventListener("change",()=>editSel(a=>a.family=$("#pFamily").value));
 $("#pBold").addEventListener("click",()=>editSel(a=>a.bold=!a.bold,true));
 $("#pItalic").addEventListener("click",()=>editSel(a=>a.italic=!a.italic,true));
@@ -768,7 +773,7 @@ function refreshVec(a){const el=els.get(a.id);if(!el)return;const old=el.querySe
 // ================= DRAG / RESIZE / ROTATE =================
 function enableDrag(a){
   const el=els.get(a.id); const br=el.querySelector(".h.br"), rot=el.querySelector(".h.rot"), mv=el.querySelector(".h.mv");
-  let mode=null,sx,sy,ox,oy,ow,oh,cx,cy,a0;
+  let mode=null,sx,sy,ox,oy,ow,oh,cx,cy,a0,ofont;
   el.addEventListener("pointerdown",e=>{
     if(a.type==="text"&&document.activeElement===el)return;
     if(tool!=="select"&&tool!=="place")return;
@@ -782,13 +787,15 @@ function enableDrag(a){
     el.setPointerCapture(e.pointerId);
     el.onpointermove=ev=>{a.rotation=Math.round((a0*0+Math.atan2(ev.clientY-cy,ev.clientX-cx)*180/Math.PI+90)/1);position(a);};
     el.onpointerup=()=>{el.onpointermove=null;el.onpointerup=null;pushHistory();};e.preventDefault();});
-  function start(e){ sx=e.clientX;sy=e.clientY;ox=a.x;oy=a.y;ow=a.w;oh=a.h;
+  function start(e){ sx=e.clientX;sy=e.clientY;ox=a.x;oy=a.y;ow=a.w;oh=a.h;ofont=a.fontPt;
     el.setPointerCapture(e.pointerId);
     el.onpointermove=ev=>{ const dx=(ev.clientX-sx)/zoom,dy=(ev.clientY-sy)/zoom;
       if(mode==="move"){a.x=ox+dx;a.y=oy+dy;}
-      else if(mode==="resize"){ a.w=Math.max(10,ow+dx);
-        a.h=a.aspect?a.w/a.aspect:Math.max(6,oh+dy);
-        if(a.natW){/* vec scales via viewBox */} }
+      else if(mode==="resize"){
+        if(a.type==="text"){ a.fontPt=Math.max(6,Math.min(200,Math.round(ofont+dy*0.6))); $("#pFont").value=a.fontPt; }
+        else { a.w=Math.max(10,ow+dx);
+          a.h=a.aspect?a.w/a.aspect:Math.max(6,oh+dy);
+          if(a.natW){/* vec scales via viewBox */} } }
       position(a); if(mode==="move") autoScroll(ev); };
     el.onpointerup=()=>{el.onpointermove=null;el.onpointerup=null;pushHistory();}; e.preventDefault(); }
 }
@@ -796,6 +803,7 @@ function autoScroll(ev){ const s=$("#stage"); const r=s.getBoundingClientRect();
   if(ev.clientY>r.bottom-m) s.scrollTop+=14; else if(ev.clientY<r.top+m) s.scrollTop-=14;
   if(ev.clientX>r.right-m)  s.scrollLeft+=14; else if(ev.clientX<r.left+m) s.scrollLeft-=14; }
 document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&tool==="markplace"){ setTool("select"); toast("בוטל"); e.preventDefault(); return; }
   if((e.key==="Delete"||e.key==="Backspace")&&sel&&sel.type!=="text"){removeAnn(sel);pushHistory();e.preventDefault();}
   if(e.ctrlKey&&e.key.toLowerCase()==="z"){e.preventDefault();undo();}
   if(e.ctrlKey&&(e.key.toLowerCase()==="y"||(e.shiftKey&&e.key.toLowerCase()==="z"))){e.preventDefault();redo();}
@@ -809,22 +817,28 @@ function setTool(t){ tool=t; $$("button.b[data-tool]").forEach(x=>x.classList.to
   document.body.classList.toggle("tool-text", t==="text");
   document.body.classList.toggle("tool-draw", ["pen","marker","arrow","whiteout","redact"].includes(t));
   const drawTool=["pen","line","arrow","rect"].includes(t);
-  if(t==="text"){showProps("text");} else if(drawTool){showProps("draw");} else if(t==="place"){showProps("place");} else if(!sel){showProps(null);}
-  $("#stage").style.cursor=(drawTool||["redact","whiteout","marker","place"].includes(t))?"crosshair":"default";
+  if(t==="text"){showProps("text");} else if(drawTool){showProps("draw");} else if(t==="place"){showProps("place");} else if(t==="markplace"){showProps(null);} else if(!sel){showProps(null);}
+  if(t!=="markplace") pendingMark=null;   // leaving mark-place mode cancels a pending mark
+  $("#stage").style.cursor=(drawTool||["redact","whiteout","marker","place","markplace"].includes(t))?"crosshair":"default";
 }
 $("#placeDone").addEventListener("click",()=>{ pendingStamp=null; setTool("select"); toast("סיום הצבה"); });
 setTool("select");
 
-// ===== quick marks: check (✓) / cross (✗) =====
-function addMark(ch,color){
-  const p=curPage(); if(!p){toast("קודם פתח PDF");return;}
-  const eff=effSize(p);
-  addTextValue(p,ch,{x:eff.w/2,y:eff.h*0.16,style:{color,fontPt:24,bold:true,align:"center"}});
-  setTool("select");                 // so it can be dragged right away
-  toast("נוסף — גרור למיקום הרצוי");
+// ===== quick marks: check (✓) / cross (✗) — click the button, then click on the
+//        document where the mark should go (place mode), not immediately. =====
+function startMark(ch,color){
+  if(!curPage()){ toast("קודם פתח PDF"); return; }
+  pendingMark={ch,color};
+  setTool("markplace");
+  toast("לחץ במקום שבו למקם את הסימן");
 }
-$("#btnCheck")&&$("#btnCheck").addEventListener("click",()=>addMark("✓","#16a34a"));
-$("#btnCross")&&$("#btnCross").addEventListener("click",()=>addMark("✗","#e11d48"));
+function placeMarkAt(p,x,y){
+  if(!pendingMark) return;
+  addTextValue(p,pendingMark.ch,{x,y,style:{color:pendingMark.color,fontPt:24,bold:true,align:"center"}});
+  pendingMark=null; setTool("select");   // placed → select mode so it can be dragged/resized
+}
+$("#btnCheck")&&$("#btnCheck").addEventListener("click",()=>startMark("✓","#16a34a"));
+$("#btnCross")&&$("#btnCross").addEventListener("click",()=>startMark("✗","#e11d48"));
 
 // ================= INSERT MENU =================
 $("#insertBtn").addEventListener("click",e=>{e.stopPropagation();$("#insertMenu").classList.toggle("open");});

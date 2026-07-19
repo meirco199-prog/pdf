@@ -1,7 +1,7 @@
 // Service worker for the "עורך PDF" PWA (installability + offline).
 // v2: network-first for the page itself so new deploys always show up,
 // cache-first for the static icons.
-const CACHE = 'pdf-editor-v2';
+const CACHE = 'pdf-editor-v3';
 
 const ASSETS = [
   './',
