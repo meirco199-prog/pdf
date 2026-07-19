@@ -1,0 +1,53 @@
+{
+  "name": "pdf-editor-desktop",
+  "productName": "עורך PDF",
+  "version": "1.0.0",
+  "description": "עורך PDF — מערכת עריכה מלאה (גרסת דסקטופ)",
+  "main": "main.js",
+  "author": "Yahav",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.yahav.pdfeditor",
+    "productName": "עורך PDF",
+    "artifactName": "PDF-Editor-Setup-${version}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "app/**/*",
+      "build/icon.ico"
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.ico"
+    },
+    "fileAssociations": [
+      {
+        "ext": "pdf",
+        "name": "PDF Document",
+        "description": "PDF Document",
+        "icon": "build/icon.ico",
+        "role": "Editor"
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "עורך PDF",
+      "installerLanguages": ["en_US"]
+    }
+  }
+}
