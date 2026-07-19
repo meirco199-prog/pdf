@@ -4,9 +4,9 @@ on:
   workflow_dispatch:        # run manually from the Actions tab
     inputs:
       version:
-        description: 'Release tag to publish'
+        description: 'Release tag to publish (leave empty to use the app version)'
         required: false
-        default: 'v1.0.0'
+        default: ''
   push:
     tags:
       - 'v*'                 # pushing a tag like v1.0.0 also builds + publishes
@@ -74,8 +74,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          TAG="${{ github.event.inputs.version }}"
-          if [ -z "$TAG" ]; then TAG="v1.0.0"; fi
+          # Derive the release tag from the app version (e.g. 1.0.1 -> v1.0.1)
+          VER="$(node -p "require('./desktop/package.json').version")"
+          TAG="v$VER"
+          if [ -n "${{ github.event.inputs.version }}" ]; then TAG="${{ github.event.inputs.version }}"; fi
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then TAG="$GITHUB_REF_NAME"; fi
           NOTES="קובץ ההתקנה של עורך ה-PDF ל-Windows. הורידו את קובץ ה-.exe והריצו אותו. במסך אזהרה של Windows: לחצו \"מידע נוסף\" ואז \"הפעל בכל זאת\". לאחר ההתקנה אפשר לפתוח PDF בתוכנה דרך קליק ימני → פתח באמצעות → עורך PDF."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
