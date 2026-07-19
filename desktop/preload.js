@@ -6,5 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Returns { name, data } for the PDF the app was opened with, or null.
   getInitialFile: () => ipcRenderer.invoke('get-initial-file'),
   // Fires when the user opens another PDF while the app is already running.
-  onOpenFile: (cb) => ipcRenderer.on('open-file', (_event, payload) => cb(payload))
+  onOpenFile: (cb) => ipcRenderer.on('open-file', (_event, payload) => cb(payload)),
+  // Open a link (Gmail / WhatsApp Web) in the system default browser (Chrome).
+  openExternal: (url) => ipcRenderer.invoke('open-external', url)
 });

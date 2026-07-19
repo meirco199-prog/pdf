@@ -1106,12 +1106,31 @@ $("#btnDownload").addEventListener("click",async()=>{if(!needPdf())return;
 $("#btnShare").addEventListener("click",async()=>{if(!needPdf())return;toast("מכין לשיתוף…"+selNote());const f=await getFile({pages:selectedPages()});
   if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f],title:outName(),text:"מסמך PDF"});}catch(e){}}
   else{downloadBlob(await getBlob({pages:selectedPages()}));toast("הדפדפן לא תומך בשיתוף ישיר — הקובץ הורד");}});
-$("#btnWhatsapp").addEventListener("click",async()=>{if(!needPdf())return;const f=await getFile({pages:selectedPages()});
-  if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f],text:"מצורף מסמך"});return;}catch(e){}}
-  downloadBlob(await getBlob({pages:selectedPages()}));toast("הקובץ הורד — גרור לצ׳אט וואטסאפ");window.open("https://web.whatsapp.com/","_blank");});
-$("#btnEmail").addEventListener("click",async()=>{if(!needPdf())return;const f=await getFile({pages:selectedPages()});
-  if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f],title:outName(),text:"מצורף מסמך"});return;}catch(e){}}
-  downloadBlob(await getBlob({pages:selectedPages()}));toast("הקובץ הורד — צרף למייל");window.location.href="mailto:?subject="+encodeURIComponent("מסמך מצורף")+"&body="+encodeURIComponent("שלום,\nמצורף המסמך.\n");});
+// Open a link in the real browser (Chrome). In the desktop app this goes to
+// the system default browser; on the web it opens a tab (reusing one by name).
+function openLink(url,name){
+  if(window.electronAPI&&window.electronAPI.openExternal){ window.electronAPI.openExternal(url); }
+  else{ window.open(url,name||"_blank","noopener"); }
+}
+// Native share (attaching the file directly) only really works on phones —
+// on desktop it tends to open the wrong app (WhatsApp desktop / Outlook).
+function isMobile(){ return /android|iphone|ipad|ipod/i.test(navigator.userAgent) && (navigator.maxTouchPoints||0)>0; }
+
+$("#btnWhatsapp").addEventListener("click",async()=>{if(!needPdf())return;
+  if(isMobile()){ const f=await getFile({pages:selectedPages()});
+    if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f],text:"מצורף מסמך"});return;}catch(e){}} }
+  // Desktop: download the PDF and open WhatsApp Web in the browser (not the desktop app).
+  downloadBlob(await getBlob({pages:selectedPages()}));
+  toast("הקובץ הורד — גררו אותו לצ׳אט ב-WhatsApp Web");
+  openLink("https://web.whatsapp.com/","whatsapp_web");});
+$("#btnEmail").addEventListener("click",async()=>{if(!needPdf())return;
+  if(isMobile()){ const f=await getFile({pages:selectedPages()});
+    if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f],title:outName(),text:"מצורף מסמך"});return;}catch(e){}} }
+  // Desktop: download the PDF and open a Gmail compose window in the browser (not Outlook).
+  downloadBlob(await getBlob({pages:selectedPages()}));
+  toast("הקובץ הורד — צרפו אותו להודעה ב-Gmail");
+  const su=encodeURIComponent("מסמך מצורף"), body=encodeURIComponent("שלום,\nמצורף המסמך (יש לצרף את הקובץ שהורד).\n");
+  openLink("https://mail.google.com/mail/?view=cm&fs=1&tf=1&su="+su+"&body="+body,"gmail_compose");});
 
 // selected pages export / split
 $("#btnExportSel").addEventListener("click",async()=>{const sel=model.filter(p=>p.checked);

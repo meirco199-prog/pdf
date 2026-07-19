@@ -1,7 +1,7 @@
 // Electron main process for "עורך PDF" desktop app.
 // Opens a PDF that was double-clicked / "opened with" this app, and routes
 // subsequent opens to the running window.
-const { app, BrowserWindow, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -91,6 +91,20 @@ if (!gotLock) {
       showError(mainWindow, 'קובץ האפליקציה לא נמצא:\n' + indexPath);
     }
 
+    // External links (Gmail, WhatsApp Web, …) open in the system default browser (Chrome),
+    // never inside the app. Blob/data URLs (PDF preview) are allowed to open a window.
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\//i.test(url)) { shell.openExternal(url); return { action: 'deny' }; }
+      if (/^(blob|data):/i.test(url)) { return { action: 'allow' }; }
+      return { action: 'deny' };
+    });
+    mainWindow.webContents.on('will-navigate', (e, url) => {
+      if (/^https?:\/\//i.test(url) && url !== mainWindow.webContents.getURL()) {
+        e.preventDefault();
+        shell.openExternal(url);
+      }
+    });
+
     // If the page ever fails to load, show a readable message instead of a black screen.
     mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
       showError(mainWindow, 'טעינת האפליקציה נכשלה\n' + desc + ' (' + code + ')\n' + url);
@@ -112,6 +126,11 @@ if (!gotLock) {
       String(msg).replace(/</g, '&lt;') + '</pre></div></body></html>';
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
   }
+
+  // Open a URL in the default browser (used by the Gmail / WhatsApp Web buttons).
+  ipcMain.handle('open-external', (_e, url) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
+  });
 
   // Renderer asks (on load) for the file the app was opened with.
   ipcMain.handle('get-initial-file', () => {
