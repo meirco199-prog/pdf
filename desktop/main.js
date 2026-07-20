@@ -2,7 +2,7 @@
 // The editor is served from a tiny built-in HTTP server on 127.0.0.1 (the same
 // setup it was built and tested against) instead of file://, which avoids the
 // ERR_FAILED that large local pages hit under the file:// protocol.
-const { app, BrowserWindow, ipcMain, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -14,6 +14,8 @@ app.disableHardwareAcceleration();
 let mainWindow = null;
 let pendingFile = null; // a PDF path waiting to be handed to the renderer
 let appBaseUrl = null;  // http://127.0.0.1:<port> once the local server is up
+let docDirty = false;   // renderer reports unsaved changes
+let forceClose = false; // set once the user chose to close (saved or discarded)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -144,6 +146,25 @@ if (!gotLock) {
       showError(mainWindow, 'תהליך התצוגה קרס: ' + (details && details.reason));
     });
 
+    // Prompt to save unsaved changes before the window closes.
+    mainWindow.on('close', (e) => {
+      if (forceClose || !docDirty) return;
+      e.preventDefault();
+      const choice = dialog.showMessageBoxSync(mainWindow, {
+        type: 'warning',
+        buttons: ['שמור', 'אל תשמור', 'ביטול'],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true,
+        title: 'שמירה',
+        message: 'יש שינויים שלא נשמרו במסמך.',
+        detail: 'האם לשמור את המסמך לפני היציאה?'
+      });
+      if (choice === 2) return;                 // Cancel — stay open
+      if (choice === 1) { forceClose = true; mainWindow.close(); return; } // Don't save
+      mainWindow.webContents.send('save-then-close'); // Save → renderer saves, then allow-close
+    });
+
     mainWindow.on('closed', () => { mainWindow = null; });
   }
 
@@ -160,6 +181,24 @@ if (!gotLock) {
 
   ipcMain.handle('open-external', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
+  });
+
+  // Renderer reports whether there are unsaved changes.
+  ipcMain.on('set-dirty', (_e, v) => { docDirty = !!v; });
+
+  // Renderer asks to close after saving (or the user chose "Save" on close).
+  ipcMain.on('allow-close', () => { forceClose = true; if (mainWindow) mainWindow.close(); });
+
+  // Native "Save As" — write the PDF bytes to a location the user picks.
+  ipcMain.handle('save-pdf', async (_e, { bytes, name }) => {
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'שמירת מסמך',
+      defaultPath: name || 'document.pdf',
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (canceled || !filePath) return { saved: false, canceled: true };
+    try { fs.writeFileSync(filePath, Buffer.from(bytes)); return { saved: true, path: filePath }; }
+    catch (err) { return { saved: false, error: String(err) }; }
   });
 
   ipcMain.handle('get-initial-file', () => {

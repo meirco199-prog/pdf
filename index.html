@@ -211,6 +211,7 @@
   <button class="b" id="btnZoomIn" title="הגדל">➕<span class="lbl">הגדל</span></button>
 
   <span class="grow"></span>
+  <button class="b ok" id="btnSave" title="שמור (Ctrl+S)">💾 <span class="lbl">שמור</span></button>
   <button class="b" id="btnPreview" title="תצוגה מקדימה">👁️ <span class="lbl">תצוגה</span></button>
   <button class="b ok" id="btnShare">📤 <span class="lbl">שתף</span></button>
   <button class="b wa" id="btnWhatsapp">🟢 <span class="lbl">וואטסאפ</span></button>
@@ -389,6 +390,7 @@ $("#fileInput").addEventListener("change",async e=>{
   fileName=fs[0].name; model=[]; Object.keys(sources).forEach(k=>delete sources[k]);
   for(const f of fs) await addSource(await f.arrayBuffer());
   $("#empty")?.remove(); selPage=0; userZoomed=false; zoom=(window.innerWidth<=820?fitZoom():1.4); renderAll(); renderThumbs(); pushHistory();
+  setDirty(false);   // freshly opened document — nothing to save yet
   toast("נטענו "+model.length+" עמודים"); e.target.value="";
 });
 $("#mergeInput").addEventListener("change",async e=>{
@@ -907,9 +909,12 @@ $("#btnAddPage").addEventListener("click",()=>{ const ref=curPage();
 
 // ================= HISTORY (undo/redo) =================
 let history=[],hIdx=-1,hLock=false;
+// Tracks whether there are edits that have not been saved to a file yet.
+let docDirty=false;
+function setDirty(v){ docDirty=!!v; if(window.electronAPI&&window.electronAPI.setDirty) window.electronAPI.setDirty(docDirty); }
 function snapshot(){return JSON.stringify(model.map(p=>({...p,annotations:p.annotations})));}
 function pushHistory(){ if(hLock)return; history=history.slice(0,hIdx+1);
-  history.push(snapshot()); if(history.length>60)history.shift(); hIdx=history.length-1; autosave(); }
+  history.push(snapshot()); if(history.length>60)history.shift(); hIdx=history.length-1; setDirty(true); autosave(); }
 function restore(json){ model=JSON.parse(json); uid=Math.max(uid,...model.flatMap(p=>[+p.id.slice(1)||0,
     ...p.annotations.map(a=>+String(a.id).slice(1)||0)]),0)+1;
   hLock=true; renderAll().then(()=>{renderThumbs();hLock=false;}); }
@@ -1105,6 +1110,33 @@ function selNote(){const n=selectedPages().length;return n<model.length?(" ("+n+
 $("#btnDownload").addEventListener("click",async()=>{if(!needPdf())return;
   const pages=selectedPages(); toast("מכין קובץ…"+selNote());
   downloadBlob(await getBlob({pages}));toast("הקובץ הורד ✔"+selNote());});
+
+// ===== Save (whole document) =====
+// Desktop: native "Save As" dialog to disk. Web: download. Clears the unsaved flag.
+async function saveDocument(){
+  if(!needPdf())return false;
+  toast("שומר…");
+  const bytes=await buildPdf({});          // full document, all pages
+  if(window.electronAPI&&window.electronAPI.savePdf){
+    const res=await window.electronAPI.savePdf(Array.from(bytes), outName());
+    if(res&&res.saved){ setDirty(false); toast("נשמר ✔"); return true; }
+    toast("השמירה בוטלה"); return false;
+  }
+  downloadBlob(new Blob([bytes],{type:"application/pdf"}), outName());
+  setDirty(false); toast("המסמך נשמר (הורד) ✔"); return true;
+}
+$("#btnSave").addEventListener("click",saveDocument);
+document.addEventListener("keydown",e=>{ if(e.ctrlKey&&e.key.toLowerCase()==="s"){ e.preventDefault(); saveDocument(); } });
+
+// Warn about unsaved changes on the web (the desktop app shows its own dialog).
+window.addEventListener("beforeunload",e=>{ if(docDirty&&!window.electronAPI){ e.preventDefault(); e.returnValue=""; } });
+// Desktop: the app is closing with unsaved changes → save, then allow the close.
+if(window.electronAPI&&window.electronAPI.onSaveThenClose){
+  window.electronAPI.onSaveThenClose(async()=>{
+    const ok=await saveDocument();
+    if(ok&&window.electronAPI.allowClose) window.electronAPI.allowClose();
+  });
+}
 $("#btnShare").addEventListener("click",async()=>{if(!needPdf())return;toast("מכין לשיתוף…"+selNote());const f=await getFile({pages:selectedPages()});
   if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f],title:outName(),text:"מסמך PDF"});}catch(e){}}
   else{downloadBlob(await getBlob({pages:selectedPages()}));toast("הדפדפן לא תומך בשיתוף ישיר — הקובץ הורד");}});
@@ -1163,6 +1195,7 @@ window.loadPdfBytes=async(arrayBuf,name)=>{
   $("#empty")?.remove(); selPage=0; userZoomed=false;
   zoom=(window.innerWidth<=820?fitZoom():1.4);
   await renderAll(); renderThumbs(); pushHistory();
+  setDirty(false);   // freshly opened document
   toast("נטען: "+fileName+" — "+model.length+" עמודים");
 };
 // drag & drop a PDF anywhere on the page
