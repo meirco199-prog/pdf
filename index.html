@@ -395,6 +395,7 @@ loadLib();
 // ================= OPEN / MERGE =================
 $("#fileInput").addEventListener("change",async e=>{
   const fs=[...e.target.files]; if(!fs.length)return;
+  showLoading();
   fileName=fs[0].name; model=[]; Object.keys(sources).forEach(k=>delete sources[k]);
   for(const f of fs) await addSource(await f.arrayBuffer());
   $("#empty")?.remove(); selPage=0; userZoomed=false; zoom=(window.innerWidth<=820?fitZoom():1.4); renderAll(); renderThumbs(); pushHistory();
@@ -1291,8 +1292,12 @@ $("#btnSplit").addEventListener("click",async()=>{const chosen=model.filter(p=>p
     downloadBlob(new Blob([await buildPdf({pages:[list[i]]})],{type:"application/pdf"}),fileName.replace(/\.pdf$/i,"")+"-עמוד"+idx+".pdf");
     await new Promise(r=>setTimeout(r,300));} toast("פוצל להורדות");});
 
+// Replace the multi-line welcome text with a clean "loading" line while a file opens.
+function showLoading(){ const em=$("#empty"); if(em) em.innerHTML='<div style="margin-top:20vh;font-size:16px">טוען מסמך… ⏳</div>'; }
+
 // ===== programmatic load (desktop app / drag&drop) =====
 window.loadPdfBytes=async(arrayBuf,name)=>{
+  showLoading();
   fileName=name||"document.pdf";
   model=[]; Object.keys(sources).forEach(k=>delete sources[k]);
   await addSource(arrayBuf);
@@ -1310,8 +1315,15 @@ document.addEventListener("drop",async e=>{
 });
 // Electron desktop: receive the file the app was opened with
 if(window.electronAPI){
+  const welcomeHTML = $("#empty") ? $("#empty").innerHTML : "";
   const take=f=>{ if(f&&f.data) window.loadPdfBytes(new Uint8Array(f.data).buffer, f.name); };
-  window.electronAPI.getInitialFile().then(take).catch(()=>{});
+  // Show a clean "loading" line instead of the feature list while we check for a file,
+  // so opening a PDF via the app goes straight to loading — no welcome-text flash.
+  showLoading();
+  window.electronAPI.getInitialFile().then(f=>{
+    if(f&&f.data) take(f);
+    else { const em=$("#empty"); if(em) em.innerHTML=welcomeHTML; }   // opened without a file
+  }).catch(()=>{ const em=$("#empty"); if(em) em.innerHTML=welcomeHTML; });
   if(window.electronAPI.onOpenFile) window.electronAPI.onOpenFile(take);
 }
 
