@@ -212,6 +212,7 @@
 
   <span class="grow"></span>
   <button class="b ok" id="btnSave" title="שמור (Ctrl+S)">💾 <span class="lbl">שמור</span></button>
+  <button class="b" id="btnPrint" title="הדפס (Ctrl+P)">🖨️ <span class="lbl">הדפס</span></button>
   <button class="b" id="btnPreview" title="תצוגה מקדימה">👁️ <span class="lbl">תצוגה</span></button>
   <button class="b ok" id="btnShare">📤 <span class="lbl">שתף</span></button>
   <button class="b wa" id="btnWhatsapp">🟢 <span class="lbl">וואטסאפ</span></button>
@@ -535,6 +536,8 @@ function commitDraw(){
     if(draw.w<4||draw.h<4)return;
     a={id:"a"+(uid++),type:draw.type,x:draw.x,y:draw.y,w:draw.w,h:draw.h,
       color:draw.color,width:draw.width,fill:draw.fill,rotation:0};
+    // erase blends into the paper colour instead of a bright white square
+    if(draw.type==="whiteout") a.coverColor=sampleBgColor(p,draw.x,draw.y,draw.w,draw.h);
   }
   p.annotations.push(a); mountAnn(p,a);
   // an erase should just disappear into the page — no selection, no ✕ handle
@@ -601,6 +604,29 @@ function sampleTextColor(p,xPt,yPt){
     return "#"+best.map(v=>v.toString(16).padStart(2,"0")).join("");
   }catch(e){ return null; }
 }
+// Dominant (background) colour inside an area of the page — so an "erase" can
+// blend into the paper instead of leaving a bright white square.
+function sampleBgColor(p,xPt,yPt,wPt,hPt){
+  try{
+    const pe=pageEls.get(p.id); if(!pe) return "#ffffff";
+    const cv=pe.canvas, ratio=window.devicePixelRatio||1;
+    const x0=Math.max(0,Math.round(xPt*zoom*ratio)), y0=Math.max(0,Math.round(yPt*zoom*ratio));
+    const w=Math.min(cv.width-x0,Math.round(wPt*zoom*ratio)), h=Math.min(cv.height-y0,Math.round(hPt*zoom*ratio));
+    if(w<=1||h<=1) return "#ffffff";
+    const d=cv.getContext("2d").getImageData(x0,y0,w,h).data;
+    const counts=new Map(); let bestKey=0,bestN=0;
+    for(let i=0;i<d.length;i+=4){
+      if(d[i+3]<200) continue;
+      const key=((d[i]&0xF0)<<16)|((d[i+1]&0xF0)<<8)|(d[i+2]&0xF0);   // quantise to cut noise
+      const n=(counts.get(key)||0)+1; counts.set(key,n);
+      if(n>bestN){bestN=n;bestKey=key;}
+    }
+    const r=(bestKey>>16)&255,g=(bestKey>>8)&255,b=bestKey&255;
+    if(r>=232&&g>=232&&b>=232) return "#ffffff";   // light paper → clean white
+    const hx=v=>Math.min(255,v+8).toString(16).padStart(2,"0");
+    return "#"+hx(r)+hx(g)+hx(b);
+  }catch(e){ return "#ffffff"; }
+}
 async function detectStyleAt(p,x,y){
   const out={};
   const items=await pageTextItems(p);
@@ -666,7 +692,7 @@ function mountAnn(p,a){
   }else if(a.type==="redact"){
     el.style.background="#000";
   }else if(a.type==="whiteout"){
-    el.style.background="#fff";   // clean cover — no outline, nothing to see
+    el.style.background=a.coverColor||"#fff";   // blends into the paper — no visible box
   }else if(a.type==="highlight"){
     el.style.background=hexA("#ffeb3b",0.4);
   }else{ el.appendChild(vecSvg(a)); }
@@ -1059,7 +1085,7 @@ async function paintAnnotations(ctx,p,RES){
     if(a.type==="text"){ paintText(ctx,a,RES); }
     else if(a.type==="image"){ const im=await loadImg(a.url); ctx.drawImage(im,a.x*RES,a.y*RES,a.w*RES,a.h*RES); }
     else if(a.type==="redact"){ ctx.fillStyle="#000"; ctx.fillRect(a.x*RES,a.y*RES,a.w*RES,a.h*RES); }
-    else if(a.type==="whiteout"){ ctx.fillStyle="#fff"; ctx.fillRect(a.x*RES,a.y*RES,a.w*RES,a.h*RES); }
+    else if(a.type==="whiteout"){ ctx.fillStyle=a.coverColor||"#fff"; ctx.fillRect(a.x*RES,a.y*RES,a.w*RES,a.h*RES); }
     else if(a.type==="highlight"){ ctx.fillStyle=hexA("#ffeb3b",0.4); ctx.fillRect(a.x*RES,a.y*RES,a.w*RES,a.h*RES); }
     else if(a.type==="rect"){ ctx.lineWidth=a.width*RES;
       if(a.fill){ctx.fillStyle=hexA(a.color,0.25);ctx.fillRect(a.x*RES,a.y*RES,a.w*RES,a.h*RES);}
@@ -1126,7 +1152,41 @@ async function saveDocument(){
   setDirty(false); toast("המסמך נשמר (הורד) ✔"); return true;
 }
 $("#btnSave").addEventListener("click",saveDocument);
-document.addEventListener("keydown",e=>{ if(e.ctrlKey&&e.key.toLowerCase()==="s"){ e.preventDefault(); saveDocument(); } });
+
+// ===== Print =====
+// Render the (selected) pages to images and print them via a hidden iframe —
+// works both on the web and inside the desktop app.
+async function printDocument(){
+  if(!needPdf())return;
+  toast("מכין להדפסה…");
+  const list=selectedPages().length?selectedPages():model;
+  const imgs=[];
+  for(const p of list){ const eff=effSize(p); const cv=await renderFullPageCanvas(p,eff,2);
+    imgs.push(cv.toDataURL("image/jpeg",0.92)); }
+  const ifr=document.createElement("iframe");
+  ifr.style.cssText="position:fixed;right:-10000px;top:0;width:0;height:0;border:0";
+  document.body.appendChild(ifr);
+  const doc=ifr.contentDocument||ifr.contentWindow.document;
+  doc.open();
+  doc.write('<!doctype html><html><head><meta charset="utf-8"><style>'+
+    '@page{margin:0}html,body{margin:0;padding:0}'+
+    'img{display:block;width:100%;height:auto;page-break-after:always}'+
+    'img:last-child{page-break-after:auto}</style></head><body>'+
+    imgs.map(u=>'<img src="'+u+'">').join('')+'</body></html>');
+  doc.close();
+  const cleanup=()=>setTimeout(()=>ifr.remove(),1500);
+  const imel=[...doc.images]; let n=0;
+  const go=()=>{ try{ ifr.contentWindow.focus(); ifr.contentWindow.print(); }catch(e){} cleanup(); };
+  if(!imel.length){ go(); return; }
+  imel.forEach(img=>{ if(img.complete) tick(); else { img.onload=tick; img.onerror=tick; } });
+  function tick(){ if(++n>=imel.length) setTimeout(go,150); }
+}
+$("#btnPrint").addEventListener("click",printDocument);
+
+document.addEventListener("keydown",e=>{
+  if(e.ctrlKey&&e.key.toLowerCase()==="s"){ e.preventDefault(); saveDocument(); }
+  if(e.ctrlKey&&e.key.toLowerCase()==="p"){ e.preventDefault(); printDocument(); }
+});
 
 // Warn about unsaved changes on the web (the desktop app shows its own dialog).
 window.addEventListener("beforeunload",e=>{ if(docDirty&&!window.electronAPI){ e.preventDefault(); e.returnValue=""; } });
