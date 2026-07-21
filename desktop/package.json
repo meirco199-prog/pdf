@@ -1,7 +1,7 @@
 {
   "name": "pdf-editor-desktop",
   "productName": "עורך PDF",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "עורך PDF — מערכת עריכה מלאה (גרסת דסקטופ)",
   "main": "main.js",
   "author": "Yahav",

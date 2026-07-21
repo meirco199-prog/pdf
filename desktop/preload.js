@@ -13,5 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setDirty: (v) => ipcRenderer.send('set-dirty', v),
   savePdf: (bytes, name) => ipcRenderer.invoke('save-pdf', { bytes, name }),
   onSaveThenClose: (cb) => ipcRenderer.on('save-then-close', () => cb()),
-  allowClose: () => ipcRenderer.send('allow-close')
+  allowClose: () => ipcRenderer.send('allow-close'),
+  // Tell the main process the document/page is rendered so it can show the window.
+  signalReady: () => ipcRenderer.send('renderer-ready')
 });

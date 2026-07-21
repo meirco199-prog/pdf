@@ -420,10 +420,13 @@ async function addSource(buf){
 }
 
 // ================= RENDER PAGES =================
-async function renderAll(){
+async function renderAll(onFirstPage){
   const stage=$("#stage"); const sy=stage.scrollTop; stage.innerHTML=""; pageEls.clear(); els.clear();
-  for(const p of model) await renderPageWrap(p,stage);
-  for(const p of model) for(const a of p.annotations) mountAnn(p,a);
+  for(let i=0;i<model.length;i++){
+    await renderPageWrap(model[i],stage);
+    for(const a of model[i].annotations) mountAnn(model[i],a);
+    if(i===0 && onFirstPage) onFirstPage();   // first page is on screen — reveal the window now
+  }
   stage.scrollTop=sy; updateZoomLbl();
 }
 function effSize(p){ // logical size after rotation
@@ -1303,7 +1306,8 @@ window.loadPdfBytes=async(arrayBuf,name)=>{
   await addSource(arrayBuf);
   $("#empty")?.remove(); selPage=0; userZoomed=false;
   zoom=(window.innerWidth<=820?fitZoom():1.4);
-  await renderAll(); renderThumbs(); pushHistory();
+  await renderAll(()=>{ window.electronAPI&&window.electronAPI.signalReady&&window.electronAPI.signalReady(); });
+  renderThumbs(); pushHistory();
   setDirty(false);   // freshly opened document
   toast("נטען: "+fileName+" — "+model.length+" עמודים");
 };
@@ -1320,10 +1324,11 @@ if(window.electronAPI){
   // Show a clean "loading" line instead of the feature list while we check for a file,
   // so opening a PDF via the app goes straight to loading — no welcome-text flash.
   showLoading();
+  const ready=()=>window.electronAPI.signalReady&&window.electronAPI.signalReady();
   window.electronAPI.getInitialFile().then(f=>{
-    if(f&&f.data) take(f);
-    else { const em=$("#empty"); if(em) em.innerHTML=welcomeHTML; }   // opened without a file
-  }).catch(()=>{ const em=$("#empty"); if(em) em.innerHTML=welcomeHTML; });
+    if(f&&f.data) take(f);   // loadPdfBytes reveals the window after the first page renders
+    else { const em=$("#empty"); if(em) em.innerHTML=welcomeHTML; ready(); }   // opened without a file
+  }).catch(()=>{ const em=$("#empty"); if(em) em.innerHTML=welcomeHTML; ready(); });
   if(window.electronAPI.onOpenFile) window.electronAPI.onOpenFile(take);
 }
 
