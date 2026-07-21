@@ -247,7 +247,7 @@
   </span>
   <!-- draw props -->
   <span class="pgrp" data-for="draw" style="display:none;gap:8px;align-items:center;flex-wrap:wrap">
-    <label>צבע <input type="color" id="dColor" value="#e11d48"></label>
+    <label>צבע <input type="color" id="dColor" value="#000000"></label>
     <label>עובי <input type="range" id="dWidth" min="1" max="20" value="3"><span id="dWlbl" style="color:var(--muted);font-size:12px">3</span></label>
     <label id="dFillWrap" style="display:none"><input type="checkbox" id="dFill"> מילוי</label>
   </span>
@@ -295,7 +295,7 @@
       <div class="row"><canvas id="sigpad" width="960" height="400"></canvas></div>
       <div class="row">
         <label class="hint">עובי <input type="range" id="sigWidth" min="1" max="8" value="3"></label>
-        <label class="hint">צבע <input type="color" id="sigColor" value="#0b3d91"></label>
+        <label class="hint">צבע <input type="color" id="sigColor" value="#000000"></label>
         <span class="grow"></span>
         <button class="b" id="sigClear">נקה</button>
         <button class="b pri" id="sigUse">הוסף למסמך</button>
@@ -361,11 +361,11 @@ let fileName="document.pdf";
 const els=new Map();           // annId -> DOM element
 const pageEls=new Map();       // pageId -> {wrap, overlay, canvas}
 let draw=null;                 // active drawing op
-const drawStyle={color:"#e11d48",width:3,fill:false};
+const drawStyle={color:"#000000",width:3,fill:false};
 // Remembered styles for NEW items — updated whenever the user changes the
 // colour/size/font controls, so the last choice sticks for next time.
 const textDefaults={color:"#000000",size:12,family:"Arial, sans-serif"};
-const markStyles={check:{color:"#16a34a",size:24}, cross:{color:"#e11d48",size:24}};
+const markStyles={check:{color:"#000000",size:24}, cross:{color:"#000000",size:24}};
 function rememberStyle(prop,val,ann){
   const a = ann===undefined ? sel : ann;
   if(a && a.mark && markStyles[a.mark]){ if(prop==="color"||prop==="size") markStyles[a.mark][prop]=val; }
