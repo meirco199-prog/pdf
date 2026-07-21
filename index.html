@@ -1296,7 +1296,7 @@ $("#btnSplit").addEventListener("click",async()=>{const chosen=model.filter(p=>p
     await new Promise(r=>setTimeout(r,300));} toast("פוצל להורדות");});
 
 // Replace the multi-line welcome text with a clean "loading" line while a file opens.
-function showLoading(){ const em=$("#empty"); if(em) em.innerHTML='<div style="margin-top:20vh;font-size:16px">טוען מסמך… ⏳</div>'; }
+function showLoading(){ const em=$("#empty"); if(em) em.innerHTML=''; }   // blank (no welcome/loading text) while a file opens
 
 // ===== programmatic load (desktop app / drag&drop) =====
 window.loadPdfBytes=async(arrayBuf,name)=>{
