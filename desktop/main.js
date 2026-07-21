@@ -121,6 +121,7 @@ if (!gotLock) {
       backgroundColor: '#0e1526',
       icon: path.join(__dirname, 'build', 'icon.ico'),
       autoHideMenuBar: true,
+      show: false,   // stay hidden until the document is actually rendered
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
@@ -129,6 +130,13 @@ if (!gotLock) {
       }
     });
     Menu.setApplicationMenu(null);
+
+    // Reveal the window only when the renderer says the page/document is ready,
+    // so opening a PDF jumps straight to the document — no welcome/loading flash.
+    let shown = false;
+    const showWin = () => { if (!shown && mainWindow) { shown = true; try { mainWindow.show(); } catch (e) { /* ignore */ } } };
+    ipcMain.once('renderer-ready', showWin);
+    setTimeout(showWin, 6000);   // safety: never leave the window hidden
 
     if (appBaseUrl) {
       mainWindow.loadURL(appBaseUrl + '/index.html');
