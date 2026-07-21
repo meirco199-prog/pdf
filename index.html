@@ -81,7 +81,9 @@
   .ann{position:absolute;cursor:move;touch-action:none}
   .ann.selected{outline:2px solid var(--accent2);outline-offset:1px}
   .ann.text{min-width:20px;min-height:1em;white-space:pre;color:#111;padding:1px 2px;
-    background:transparent;outline:none;font-family:Arial,Helvetica,sans-serif;line-height:1.25;overflow:visible}
+    background:transparent;outline:none;font-family:Arial,Helvetica,sans-serif;line-height:1.25;overflow:visible;
+    cursor:move;user-select:none;-webkit-user-select:none}
+  .ann.text.editing{cursor:text;user-select:text;-webkit-user-select:text}
   .ann.text:empty:before{content:attr(data-ph);color:#9aa4b2}
   .ann.image img,.ann.vec svg{display:block;width:100%;height:100%;pointer-events:none;user-select:none}
   .ann .h{position:absolute;width:13px;height:13px;background:var(--accent2);border:2px solid #fff;
@@ -234,7 +236,7 @@
         <option value="Tahoma, sans-serif">Tahoma</option>
         <option value="Georgia, serif">Georgia</option>
       </select></label>
-    <label>גודל <input type="number" id="pFont" min="6" max="200" value="18"></label>
+    <label>גודל <input type="number" id="pFont" min="6" max="200" value="12"></label>
     <label>צבע <input type="color" id="pColor" value="#000000"></label>
     <button class="b sm" id="pBold" title="מודגש"><b>B</b></button>
     <button class="b sm" id="pItalic" title="נטוי"><i>I</i></button>
@@ -281,6 +283,10 @@
 <div class="modal" id="sigModal" dir="rtl">
   <div class="card">
     <h3>הוספת חתימה</h3>
+    <div id="sigSavedStrip" style="display:none">
+      <div class="hint" style="margin:2px 0 4px">חתימות שמורות — לחצו לשימוש:</div>
+      <div class="lib" id="sigSavedLib"></div>
+    </div>
     <div class="row">
       <button class="b on" id="tabDraw">✍️ צייר</button>
       <button class="b" id="tabUpload">🖼️ העלה תמונה</button>
@@ -358,7 +364,7 @@ let draw=null;                 // active drawing op
 const drawStyle={color:"#e11d48",width:3,fill:false};
 // Remembered styles for NEW items — updated whenever the user changes the
 // colour/size/font controls, so the last choice sticks for next time.
-const textDefaults={color:"#000000",size:18,family:"Arial, sans-serif"};
+const textDefaults={color:"#000000",size:12,family:"Arial, sans-serif"};
 const markStyles={check:{color:"#16a34a",size:24}, cross:{color:"#e11d48",size:24}};
 function rememberStyle(prop,val,ann){
   const a = ann===undefined ? sel : ann;
@@ -372,7 +378,8 @@ let pendingMark=null;    // {ch,color} waiting to be placed by a click ("markpla
 // ================= UTIL =================
 function toast(m,ms=2600){const t=$("#toast");t.textContent=m;t.classList.add("show");
   clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),ms);}
-function outName(){return fileName.replace(/\.pdf$/i,"")+"-ערוך.pdf";}
+let saveSeq=0;
+function outName(){return fileName.replace(/\.pdf$/i,"")+" "+(saveSeq||1)+".pdf";}
 function loadImg(src){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=src;});}
 function fileToDataURL(f){return new Promise(r=>{const x=new FileReader();x.onload=()=>r(x.result);x.readAsDataURL(f);});}
 function dataURLtoBytes(u){const b=atob(u.split(",")[1]);const a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a;}
@@ -461,7 +468,7 @@ function attachOverlay(overlay,p){
     if(tool==="text"){
       // Use the remembered defaults (size/colour/font) — no auto-sampling from the
       // document, so the user's last choice always sticks.
-      const a=addText(p,pt.x,pt.y); select(a); setTimeout(()=>els.get(a.id)&&els.get(a.id).focus(),0);
+      const a=addText(p,pt.x,pt.y); select(a); setTimeout(()=>editText(a),0);
       return;
     }
     if(["pen","marker","line","arrow","rect","redact","whiteout"].includes(tool)){ startDraw(p,pt,e,overlay); return; }
@@ -495,9 +502,9 @@ function updateDrawPreview(){
   const s=zoom; let html="";
   if(draw.type==="draw"){
     const d=draw.points.map((pt,i)=>(i?"L":"M")+pt[0]*s+" "+pt[1]*s).join(" ");
-    html=`<svg width="100%" height="100%" style="position:absolute;overflow:visible"><path d="${d}" fill="none" stroke="${draw.color}" stroke-opacity="${draw.alpha}" stroke-width="${draw.width*s}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    html=`<svg width="100%" height="100%" style="position:absolute;left:0;top:0;overflow:visible"><path d="${d}" fill="none" stroke="${draw.color}" stroke-opacity="${draw.alpha}" stroke-width="${draw.width*s}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   }else if(draw.type==="line"||draw.type==="arrow"){
-    html=`<svg width="100%" height="100%" style="position:absolute;overflow:visible">${lineSvg(draw.x1*s,draw.y1*s,draw.x2*s,draw.y2*s,draw.color,draw.width*s,draw.type==="arrow")}</svg>`;
+    html=`<svg width="100%" height="100%" style="position:absolute;left:0;top:0;overflow:visible">${lineSvg(draw.x1*s,draw.y1*s,draw.x2*s,draw.y2*s,draw.color,draw.width*s,draw.type==="arrow")}</svg>`;
   }else{
     draw.svg.style.left=draw.x*s+"px"; draw.svg.style.top=draw.y*s+"px";
     draw.svg.style.width=draw.w*s+"px"; draw.svg.style.height=draw.h*s+"px";
@@ -682,11 +689,14 @@ function mountAnn(p,a){
   const el=document.createElement("div"); el.className="ann "+(["draw","line","arrow","rect","redact","whiteout","highlight"].includes(a.type)?"vec "+a.type:a.type);
   els.set(a.id,el); el._page=p; el._ann=a;
   if(a.type==="text"){
-    el.contentEditable="true"; el.dir="rtl"; el.dataset.ph="הקלד כאן…"; el.textContent=a.text;
+    // Not editable by default → a single click drags it (like a signature);
+    // double-click switches to edit mode.
+    el.contentEditable="false"; el.dir="rtl"; el.dataset.ph="הקלד כאן…"; el.textContent=a.text;
     applyTextStyle(a);
     el.addEventListener("input",()=>{a.text=el.innerText;});
     el.addEventListener("focus",()=>{select(a);el.classList.add("editing");});
-    el.addEventListener("blur",()=>{ el.classList.remove("editing"); if(!el.innerText.trim()){removeAnn(a);} else pushHistory(); });
+    el.addEventListener("blur",()=>{ el.classList.remove("editing"); el.contentEditable="false"; if(!el.innerText.trim()){removeAnn(a);} else pushHistory(); });
+    el.addEventListener("dblclick",()=>editText(a));
   }else if(a.type==="image"){
     const img=document.createElement("img"); img.src=a.url; el.appendChild(img);
   }else if(a.type==="redact"){
@@ -701,10 +711,21 @@ function mountAnn(p,a){
   el.appendChild(del); el.appendChild(dup);
   el.appendChild(mkH("br"));   // resize grip (text: scales font size; others: box size)
   el.appendChild(mkH("rot"));
-  if(a.type==="text"){ const mv=mkH("mv"); mv.title="גרור להזזה"; mv.contentEditable="false"; el.appendChild(mv); }
   pe.overlay.appendChild(el);
   position(a); enableDrag(a);
-  el.addEventListener("pointerdown",e=>{ if(tool==="select"||a.type==="text") select(a); });
+  el.addEventListener("pointerdown",e=>{ if(tool==="select") select(a); });
+}
+// Switch a text box into edit mode (double-click, or right after it is created).
+function editText(a){
+  const el=els.get(a.id); if(!el)return;
+  el.contentEditable="true"; el.classList.add("editing"); select(a); el.focus();
+  try{
+    const tn=[...el.childNodes].find(n=>n.nodeType===3);
+    const r=document.createRange();
+    if(tn) r.setStart(tn,tn.length); else r.selectNodeContents(el);
+    r.collapse(false);
+    const s=getSelection(); s.removeAllRanges(); s.addRange(r);
+  }catch(e){}
 }
 function mkBtn(cls,txt,fn){const b=document.createElement("div");b.className=cls;b.textContent=txt;
   b.addEventListener("pointerdown",e=>e.stopPropagation());b.addEventListener("click",fn);return b;}
@@ -800,15 +821,26 @@ function refreshVec(a){const el=els.get(a.id);if(!el)return;const old=el.querySe
 
 // ================= DRAG / RESIZE / ROTATE =================
 function enableDrag(a){
-  const el=els.get(a.id); const br=el.querySelector(".h.br"), rot=el.querySelector(".h.rot"), mv=el.querySelector(".h.mv");
+  const el=els.get(a.id); const br=el.querySelector(".h.br"), rot=el.querySelector(".h.rot");
   let mode=null,sx,sy,ox,oy,ow,oh,cx,cy,a0,ofont;
-  el.addEventListener("pointerdown",e=>{
-    if(a.type==="text"&&document.activeElement===el)return;
-    if(tool!=="select"&&tool!=="place")return;
-    mode="move"; start(e);
-  });
-  // dedicated grip: drag text by its handle regardless of tool or edit state
-  mv&&mv.addEventListener("pointerdown",e=>{e.stopPropagation();select(a);mode="move";start(e);});
+  if(a.type==="text"){
+    // Click directly on the text and drag to move it. A small threshold keeps a
+    // plain click free so double-click can still open edit mode.
+    el.addEventListener("pointerdown",e=>{
+      if(el.isContentEditable) return;         // editing → normal caret/selection
+      select(a);
+      const dsx=e.clientX,dsy=e.clientY,dox=a.x,doy=a.y; let moved=false;
+      try{el.setPointerCapture(e.pointerId);}catch(_){}
+      el.onpointermove=ev=>{ if(!moved&&Math.hypot(ev.clientX-dsx,ev.clientY-dsy)<4) return; moved=true;
+        a.x=dox+(ev.clientX-dsx)/zoom; a.y=doy+(ev.clientY-dsy)/zoom; position(a); autoScroll(ev); };
+      el.onpointerup=()=>{ el.onpointermove=null; el.onpointerup=null; if(moved){setDirty(true);pushHistory();} };
+    });
+  } else {
+    el.addEventListener("pointerdown",e=>{
+      if(tool!=="select"&&tool!=="place")return;
+      mode="move"; start(e);
+    });
+  }
   br&&br.addEventListener("pointerdown",e=>{e.stopPropagation();mode="resize";start(e);});
   rot&&rot.addEventListener("pointerdown",e=>{e.stopPropagation();mode="rotate";
     const r=el.getBoundingClientRect();cx=r.left+r.width/2;cy=r.top+r.height/2;a0=a.rotation||0;
@@ -957,7 +989,18 @@ function autosave(){ clearTimeout(asT); asT=setTimeout(()=>{ try{
 const sigpad=$("#sigpad"),sctx=sigpad.getContext("2d");
 let sdraw=false,slast=null,sdirty=false;
 $("#btnSign").addEventListener("click",()=>{if(!model.length){toast("קודם פתח PDF");return;}
-  $("#sigModal").classList.add("show");sigTab("draw");clearSig();});
+  $("#sigModal").classList.add("show");sigTab("draw");clearSig();renderSigStrip();});
+// Saved signatures shown inside the signature dialog — click to reuse without redrawing.
+function renderSigStrip(){
+  const wrap=$("#sigSavedStrip");
+  if(!lib.sigs||!lib.sigs.length){ wrap.style.display="none"; return; }
+  wrap.style.display="block";
+  fillLib("#sigSavedLib",lib.sigs,async(url)=>{
+    $("#sigModal").classList.remove("show");
+    pendingStamp={url,frac:0.15,maxW:110}; await addImageTo(curPage(),url,{frac:0.15,maxW:110}); setTool("place");
+    toast("החתימה נוספה — לחצו על הדף להוספת עוד, או 'סיום'");
+  },(i)=>{ lib.sigs.splice(i,1); saveLib(); renderSigStrip(); });
+}
 $("#sigCancel").addEventListener("click",()=>$("#sigModal").classList.remove("show"));
 $("#tabDraw").addEventListener("click",()=>sigTab("draw"));
 $("#tabUpload").addEventListener("click",()=>sigTab("upload"));
@@ -1142,6 +1185,7 @@ $("#btnDownload").addEventListener("click",async()=>{if(!needPdf())return;
 async function saveDocument(){
   if(!needPdf())return false;
   toast("שומר…");
+  saveSeq++;                                // filename gets a running number (1, 2, …)
   const bytes=await buildPdf({});          // full document, all pages
   if(window.electronAPI&&window.electronAPI.savePdf){
     const res=await window.electronAPI.savePdf(Array.from(bytes), outName());

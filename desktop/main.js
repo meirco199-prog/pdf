@@ -26,25 +26,41 @@ const MIME = {
   '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf'
 };
 
+function requestHandler(rootDir) {
+  return (req, res) => {
+    let pathname = '/index.html';
+    try { pathname = decodeURIComponent(urlmod.parse(req.url).pathname || '/'); } catch (e) { /* ignore */ }
+    if (pathname === '/' || pathname === '') pathname = '/index.html';
+    const safe = path.normalize(pathname).replace(/^([\\/]|\.\.[\\/])+/, '');
+    const filePath = path.join(rootDir, safe);
+    fs.readFile(filePath, (err, data) => {
+      if (err) { res.statusCode = 404; res.end('Not found'); return; }
+      const ext = path.extname(filePath).toLowerCase();
+      res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream');
+      res.end(data);
+    });
+  };
+}
+
+// Serve on a FIXED port so the page origin stays the same between launches —
+// otherwise localStorage (which holds the saved signatures/stamps library and
+// settings) would reset every time the app starts.
 function startServer(rootDir) {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      let pathname = '/index.html';
-      try { pathname = decodeURIComponent(urlmod.parse(req.url).pathname || '/'); } catch (e) { /* ignore */ }
-      if (pathname === '/' || pathname === '') pathname = '/index.html';
-      const safe = path.normalize(pathname).replace(/^([\\/]|\.\.[\\/])+/, '');
-      const filePath = path.join(rootDir, safe);
-      fs.readFile(filePath, (err, data) => {
-        if (err) { res.statusCode = 404; res.end('Not found'); return; }
-        const ext = path.extname(filePath).toLowerCase();
-        res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream');
-        res.end(data);
+  const BASE_PORT = 33017;
+  return new Promise((resolve) => {
+    const tryPort = (port, attemptsLeft) => {
+      const server = http.createServer(requestHandler(rootDir));
+      server.once('error', (err) => {
+        if (err && err.code === 'EADDRINUSE' && attemptsLeft > 0) {
+          tryPort(port + 1, attemptsLeft - 1);
+        } else {
+          const s2 = http.createServer(requestHandler(rootDir));
+          s2.listen(0, '127.0.0.1', () => resolve('http://127.0.0.1:' + s2.address().port));
+        }
       });
-    });
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      resolve('http://127.0.0.1:' + server.address().port);
-    });
+      server.listen(port, '127.0.0.1', () => resolve('http://127.0.0.1:' + port));
+    };
+    tryPort(BASE_PORT, 8);
   });
 }
 
