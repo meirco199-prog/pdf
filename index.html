@@ -178,6 +178,7 @@
   <span class="sep"></span>
   <button class="b" data-tool="text" title="טקסט">🔤<span class="lbl">טקסט</span></button>
   <button class="b" data-tool="pen" title="ציור חופשי">✏️<span class="lbl">צייר</span></button>
+  <button class="b" id="btnBluePen" title="עט כחול — כתב יד בעט כחול אמיתי">🖊️<span class="lbl">עט כחול</span></button>
   <button class="b" data-tool="marker" title="מרקר צהוב — גרור מלבן להדגשה">🖍️<span class="lbl">מרקר</span></button>
   <button class="b" data-tool="arrow" title="חץ">➘<span class="lbl">חץ</span></button>
   <button class="b" data-tool="whiteout" title="מחיקה — כיסוי לבן">🩹<span class="lbl">מחיקה</span></button>
@@ -296,6 +297,7 @@
       <div class="row">
         <label class="hint">עובי <input type="range" id="sigWidth" min="1" max="8" value="3"></label>
         <label class="hint">צבע <input type="color" id="sigColor" value="#000000"></label>
+        <button class="b sm" id="sigPenBlue" title="חתימה בעט כחול" style="flex-direction:row">🖊️ עט כחול</button>
         <span class="grow"></span>
         <button class="b" id="sigClear">נקה</button>
         <button class="b pri" id="sigUse">הוסף למסמך</button>
@@ -366,6 +368,23 @@ const drawStyle={color:"#000000",width:3,fill:false};
 // colour/size/font controls, so the last choice sticks for next time.
 const textDefaults={color:"#000000",size:12,family:"Arial, sans-serif"};
 const markStyles={check:{color:"#000000",size:24}, cross:{color:"#000000",size:24}};
+// Classic ballpoint ink colour for the "blue pen" look.
+const INK_BLUE="#1a3aa8";
+// Smooth a freehand point list into a flowing path (quadratic Bézier through the
+// midpoints of each segment) so pen strokes read like real hand-writing rather
+// than jagged polylines. Points are [[x,y],...]; returns an SVG path "d" string.
+function smoothPath(pts){
+  if(!pts||!pts.length) return "";
+  if(pts.length<3) return pts.map((p,i)=>(i?"L":"M")+p[0]+" "+p[1]).join(" ");
+  let d="M"+pts[0][0]+" "+pts[0][1];
+  for(let i=1;i<pts.length-1;i++){
+    const mx=(pts[i][0]+pts[i+1][0])/2, my=(pts[i][1]+pts[i+1][1])/2;
+    d+=" Q"+pts[i][0]+" "+pts[i][1]+" "+mx+" "+my;
+  }
+  const n=pts.length-1;
+  d+=" L"+pts[n][0]+" "+pts[n][1];
+  return d;
+}
 function rememberStyle(prop,val,ann){
   const a = ann===undefined ? sel : ann;
   if(a && a.mark && markStyles[a.mark]){ if(prop==="color"||prop==="size") markStyles[a.mark][prop]=val; }
@@ -505,7 +524,7 @@ function startDraw(p,pt,e,overlay){
 function updateDrawPreview(){
   const s=zoom; let html="";
   if(draw.type==="draw"){
-    const d=draw.points.map((pt,i)=>(i?"L":"M")+pt[0]*s+" "+pt[1]*s).join(" ");
+    const d=smoothPath(draw.points.map(pt=>[pt[0]*s,pt[1]*s]));
     html=`<svg width="100%" height="100%" style="position:absolute;left:0;top:0;overflow:visible"><path d="${d}" fill="none" stroke="${draw.color}" stroke-opacity="${draw.alpha}" stroke-width="${draw.width*s}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   }else if(draw.type==="line"||draw.type==="arrow"){
     html=`<svg width="100%" height="100%" style="position:absolute;left:0;top:0;overflow:visible">${lineSvg(draw.x1*s,draw.y1*s,draw.x2*s,draw.y2*s,draw.color,draw.width*s,draw.type==="arrow")}</svg>`;
@@ -740,7 +759,7 @@ function vecSvg(a){
   svg.setAttribute("preserveAspectRatio","none"); svg.style.overflow="visible";
   if(a.type==="draw"){
     const path=document.createElementNS(ns,"path");
-    path.setAttribute("d",a.points.map((q,i)=>(i?"L":"M")+q[0]+" "+q[1]).join(" "));
+    path.setAttribute("d",smoothPath(a.points));
     path.setAttribute("fill","none"); path.setAttribute("stroke",a.color);
     path.setAttribute("stroke-opacity",a.alpha??1); path.setAttribute("stroke-width",a.width);
     path.setAttribute("stroke-linecap","round"); path.setAttribute("stroke-linejoin","round");
@@ -821,6 +840,14 @@ $("#dWidth").addEventListener("input",()=>{drawStyle.width=+$("#dWidth").value;$
   if(sel&&sel.width!==undefined){sel.width=+$("#dWidth").value;refreshVec(sel);pushHistory();}});
 $("#dFill").addEventListener("change",()=>{drawStyle.fill=$("#dFill").checked;
   if(sel&&sel.type==="rect"){sel.fill=$("#dFill").checked;refreshVec(sel);pushHistory();}});
+// Blue pen: ink-blue freehand that looks hand-written with a real pen.
+$("#btnBluePen").addEventListener("click",()=>{
+  drawStyle.color=INK_BLUE; drawStyle.width=2; drawStyle.fill=false;
+  const dc=$("#dColor"); if(dc) dc.value=INK_BLUE;
+  const dw=$("#dWidth"); if(dw) dw.value=2; const dl=$("#dWlbl"); if(dl) dl.textContent="2";
+  setTool("pen");
+  toast("עט כחול — כתוב/צייר ביד חופשית");
+});
 function refreshVec(a){const el=els.get(a.id);if(!el)return;const old=el.querySelector("svg");if(old){old.replaceWith(vecSvg(a));}}
 
 // ================= DRAG / RESIZE / ROTATE =================
@@ -991,7 +1018,7 @@ function autosave(){ clearTimeout(asT); asT=setTimeout(()=>{ try{
 
 // ================= SIGNATURE =================
 const sigpad=$("#sigpad"),sctx=sigpad.getContext("2d");
-let sdraw=false,slast=null,sdirty=false;
+let sdraw=false,slast=null,smid=null,sdirty=false;
 $("#btnSign").addEventListener("click",()=>{if(!model.length){toast("קודם פתח PDF");return;}
   $("#sigModal").classList.add("show");sigTab("draw");clearSig();renderSigStrip();});
 // Saved signatures shown inside the signature dialog — click to reuse without redrawing.
@@ -1013,12 +1040,24 @@ function sigTab(t){$("#drawArea").style.display=t==="draw"?"block":"none";
   $("#tabDraw").classList.toggle("on",t==="draw");$("#tabUpload").classList.toggle("on",t==="upload");}
 function clearSig(){sctx.clearRect(0,0,sigpad.width,sigpad.height);sdirty=false;}
 function spos(e){const r=sigpad.getBoundingClientRect();return{x:(e.clientX-r.left)*(sigpad.width/r.width),y:(e.clientY-r.top)*(sigpad.height/r.height)};}
-sigpad.addEventListener("pointerdown",e=>{sdraw=true;slast=spos(e);sigpad.setPointerCapture(e.pointerId);});
+sigpad.addEventListener("pointerdown",e=>{sdraw=true;slast=spos(e);smid=slast;
+  // dot for a single tap
+  sctx.fillStyle=$("#sigColor").value;sctx.beginPath();sctx.arc(slast.x,slast.y,(+$("#sigWidth").value*2)/2,0,Math.PI*2);sctx.fill();
+  sigpad.setPointerCapture(e.pointerId);});
 sigpad.addEventListener("pointermove",e=>{if(!sdraw)return;const p=spos(e);
+  // Quadratic smoothing through segment midpoints → flowing, pen-like strokes.
+  const mid={x:(slast.x+p.x)/2,y:(slast.y+p.y)/2};
   sctx.strokeStyle=$("#sigColor").value;sctx.lineWidth=+$("#sigWidth").value*2;sctx.lineCap="round";sctx.lineJoin="round";
-  sctx.beginPath();sctx.moveTo(slast.x,slast.y);sctx.lineTo(p.x,p.y);sctx.stroke();slast=p;sdirty=true;});
+  sctx.beginPath();sctx.moveTo(smid.x,smid.y);sctx.quadraticCurveTo(slast.x,slast.y,mid.x,mid.y);sctx.stroke();
+  slast=p;smid=mid;sdirty=true;});
 sigpad.addEventListener("pointerup",()=>sdraw=false);
 $("#sigClear").addEventListener("click",clearSig);
+// Sign with a blue pen — ink-blue, thin stroke so it reads like a real pen.
+$("#sigPenBlue").addEventListener("click",()=>{
+  const sc=$("#sigColor"); if(sc) sc.value=INK_BLUE;
+  const sw=$("#sigWidth"); if(sw) sw.value=2;
+  toast("עט כחול — חתום בלחיצה וגרירה");
+});
 $("#sigUse").addEventListener("click",async()=>{ if(!sdirty){toast("צייר חתימה קודם");return;}
   const url=trimCanvas(sigpad); $("#sigModal").classList.remove("show");
   if($("#sigSave").checked){lib.sigs.unshift(url);lib.sigs=lib.sigs.slice(0,12);saveLib();}
@@ -1139,7 +1178,12 @@ async function paintAnnotations(ctx,p,RES){
       ctx.strokeStyle=a.color; ctx.strokeRect((a.x+a.width/2)*RES,(a.y+a.width/2)*RES,(a.w-a.width)*RES,(a.h-a.width)*RES); }
     else if(a.type==="draw"){ const sx=a.w/(a.natW||a.w),sy=a.h/(a.natH||a.h);
       ctx.strokeStyle=a.color; ctx.globalAlpha=a.alpha??1; ctx.lineWidth=a.width*RES; ctx.lineCap="round"; ctx.lineJoin="round";
-      ctx.beginPath(); a.points.forEach((q,i)=>{const X=(a.x+q[0]*sx)*RES,Y=(a.y+q[1]*sy)*RES;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y);});
+      ctx.beginPath();
+      { const P=a.points.map(q=>[(a.x+q[0]*sx)*RES,(a.y+q[1]*sy)*RES]);
+        if(P.length<3){ P.forEach((q,i)=>i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1])); }
+        else { ctx.moveTo(P[0][0],P[0][1]);
+          for(let i=1;i<P.length-1;i++){ const mx=(P[i][0]+P[i+1][0])/2,my=(P[i][1]+P[i+1][1])/2; ctx.quadraticCurveTo(P[i][0],P[i][1],mx,my); }
+          ctx.lineTo(P[P.length-1][0],P[P.length-1][1]); } }
       ctx.stroke(); ctx.globalAlpha=1; }
     else if(a.type==="line"||a.type==="arrow"){ const sx=a.w/(a.natW||a.w),sy=a.h/(a.natH||a.h);
       const X1=(a.x+a.x1*sx)*RES,Y1=(a.y+a.y1*sy)*RES,X2=(a.x+a.x2*sx)*RES,Y2=(a.y+a.y2*sy)*RES;
