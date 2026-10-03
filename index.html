@@ -570,8 +570,10 @@ function commitDraw(){
     if(draw.type==="whiteout") a.coverColor=sampleBgColor(p,draw.x,draw.y,draw.w,draw.h);
   }
   p.annotations.push(a); mountAnn(p,a);
-  // an erase should just disappear into the page — no selection, no ✕ handle
-  if(a.type!=="whiteout") select(a); else select(null);
+  // Freehand writing (pen) and erase: leave unselected so the ✕/duplicate
+  // handles don't pop up over what was just written — and the pen stays
+  // active so you can keep writing. Shapes still select for easy tweaking.
+  if(a.type==="draw"||a.type==="whiteout") select(null); else select(a);
   pushHistory();
 }
 
@@ -842,9 +844,9 @@ $("#dFill").addEventListener("change",()=>{drawStyle.fill=$("#dFill").checked;
   if(sel&&sel.type==="rect"){sel.fill=$("#dFill").checked;refreshVec(sel);pushHistory();}});
 // Blue pen: ink-blue freehand that looks hand-written with a real pen.
 $("#btnBluePen").addEventListener("click",()=>{
-  drawStyle.color=INK_BLUE; drawStyle.width=2; drawStyle.fill=false;
+  drawStyle.color=INK_BLUE; drawStyle.width=1; drawStyle.fill=false;
   const dc=$("#dColor"); if(dc) dc.value=INK_BLUE;
-  const dw=$("#dWidth"); if(dw) dw.value=2; const dl=$("#dWlbl"); if(dl) dl.textContent="2";
+  const dw=$("#dWidth"); if(dw) dw.value=1; const dl=$("#dWlbl"); if(dl) dl.textContent="1";
   setTool("pen");
   toast("עט כחול — כתוב/צייר ביד חופשית");
 });
