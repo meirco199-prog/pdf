@@ -1214,8 +1214,21 @@ function paintText(ctx,a,RES){
 }
 async function getBlob(opt){return new Blob([await buildPdf(opt)],{type:"application/pdf"});}
 async function getFile(opt){return new File([await getBlob(opt)],outName(),{type:"application/pdf"});}
-function downloadBlob(blob,name){const a=document.createElement("a");a.href=URL.createObjectURL(blob);
-  a.download=name||outName();document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);}
+async function downloadBlob(blob,name){
+  const fn=name||outName();
+  // In the desktop app a plain <a download> does nothing — route the bytes to
+  // the native "Save As" dialog instead so a real file lands on disk.
+  if(window.electronAPI&&window.electronAPI.savePdf){
+    const buf=new Uint8Array(await blob.arrayBuffer());
+    const res=await window.electronAPI.savePdf(buf, fn);
+    if(res&&res.saved){ toast("נשמר ✔"); return true; }
+    if(res&&res.canceled){ toast("בוטל"); return false; }
+    toast("השמירה נכשלה"); return false;
+  }
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download=fn;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);
+  return true;
+}
 
 // ================= PREVIEW =================
 $("#btnPreview").addEventListener("click",async()=>{if(!model.length){toast("קודם פתח PDF");return;}
@@ -1238,7 +1251,7 @@ async function saveDocument(){
   saveSeq++;                                // filename gets a running number (1, 2, …)
   const bytes=await buildPdf({});          // full document, all pages
   if(window.electronAPI&&window.electronAPI.savePdf){
-    const res=await window.electronAPI.savePdf(Array.from(bytes), outName());
+    const res=await window.electronAPI.savePdf(bytes, outName());
     if(res&&res.saved){ setDirty(false); toast("נשמר ✔"); return true; }
     toast("השמירה בוטלה"); return false;
   }
